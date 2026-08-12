@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Bilibili Digest</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <!--
+    图标雪碧图。笔记卡片是 JS 动态渲染的，路径数据写在这里、用 <use> 引用，
+    好过在 JS 里拼 SVG，也免得同一个图形在几处各写一份。
+  -->
+  <svg class="sprite" aria-hidden="true" focusable="false">
+    <symbol id="i-play" viewBox="0 0 16 16">
+      <path d="M4.5 2.8 13 8l-8.5 5.2Z" fill="currentColor" stroke="none"/>
+    </symbol>
+    <symbol id="i-link" viewBox="0 0 16 16">
+      <path d="M6.6 9.4a2.6 2.6 0 0 0 3.7 0l2.4-2.4a2.6 2.6 0 0 0-3.7-3.7l-1 1"/>
+      <path d="M9.4 6.6a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l1-1"/>
+    </symbol>
+    <symbol id="i-trash" viewBox="0 0 16 16">
+      <path d="M2.8 4.3h10.4"/>
+      <path d="M6.3 4.3V3.1c0-.4.3-.8.8-.8h1.8c.5 0 .8.4.8.8v1.2"/>
+      <path d="M4.2 4.3v8.2c0 .6.5 1.2 1.1 1.2h5.4c.6 0 1.1-.6 1.1-1.2V4.3"/>
+    </symbol>
+    <symbol id="i-external" viewBox="0 0 16 16">
+      <path d="M12.8 9.3v3.1c0 .6-.5 1.1-1.1 1.1H3.6c-.6 0-1.1-.5-1.1-1.1V4.3c0-.6.5-1.1 1.1-1.1h3.1"/>
+      <path d="M9.8 2.4h3.8v3.8"/>
+      <path d="m7.4 8.6 6.2-6.2"/>
+    </symbol>
+    <symbol id="i-copy" viewBox="0 0 16 16">
+      <rect x="5.6" y="5.6" width="8" height="8" rx="1.6"/>
+      <path d="M10.4 3.6v-.8c0-.9-.7-1.6-1.6-1.6H3.6c-.9 0-1.6.7-1.6 1.6v5.2c0 .9.7 1.6 1.6 1.6h.8"/>
+    </symbol>
+    <symbol id="i-note" viewBox="0 0 16 16">
+      <path d="M8.6 2.4H4.1c-.6 0-1.1.5-1.1 1.1v8.9c0 .6.5 1.1 1.1 1.1h6.2c.6 0 1.1-.5 1.1-1.1V7.9"/>
+      <path d="M11.2 2.2a1.4 1.4 0 0 1 2 2L9.1 8.3l-2.5.5.5-2.5Z"/>
+    </symbol>
+  </svg>
+
+  <header class="app-header">
+    <div class="app-header-row">
+      <h1 class="app-title">Bilibili Digest</h1>
+      <div class="app-actions">
+        <button id="refreshBtn" class="icon-btn" title="重新获取字幕（跳过缓存）" aria-label="重新获取字幕">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9"/>
+            <path d="M13.9 1.6v2.8h-2.8"/>
+          </svg>
+        </button>
+        <button id="optionsBtn" class="icon-btn" title="打开设置" aria-label="打开设置">
+          <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M2 4.5h6.1M13.9 4.5H14"/>
+            <circle cx="11" cy="4.5" r="1.9"/>
+            <path d="M2 11.5h2.1M9.9 11.5H14"/>
+            <circle cx="6" cy="11.5" r="1.9"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <div id="videoMeta" class="video-meta" hidden>
+      <p id="videoTitle" class="video-title"></p>
+      <p class="video-submeta">
+        <span id="videoOwner"></span>
+        <span id="subtitleBadge" class="badge" hidden></span>
+        <span id="cacheBadge" class="badge badge-muted" hidden>缓存</span>
+      </p>
+    </div>
+
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-tab="transcript" role="tab">字幕</button>
+      <button class="tab" data-tab="overview" role="tab">概览</button>
+      <button class="tab" data-tab="notes" role="tab">笔记</button>
+    </nav>
+  </header>
+
+  <main class="content">
+    <!-- 字幕管线的公共状态 -->
+    <section id="loadingState" class="state" hidden>
+      <div class="spinner" aria-hidden="true"></div>
+      <p id="loadingTitle" class="state-title">正在获取字幕…</p>
+      <p id="loadingSubtitle" class="state-text"></p>
+    </section>
+
+    <section id="idleState" class="state" hidden>
+      <p class="state-title">打开一个 B 站视频</p>
+      <p class="state-text">在 bilibili.com 的播放页打开本面板，就能阅读该视频的字幕。</p>
+    </section>
+
+    <section id="errorState" class="state" hidden>
+      <p id="errorTitle" class="state-title">出错了</p>
+      <p id="errorText" class="state-text"></p>
+      <div class="state-actions">
+        <button id="errorRetryBtn" class="primary-btn">重试</button>
+        <a id="errorLoginLink" class="link-btn" href="https://www.bilibili.com" target="_blank" rel="noreferrer" hidden>去登录 B 站</a>
+      </div>
+    </section>
+
+    <!-- 字幕 -->
+    <section id="transcriptPanel" hidden>
+      <div class="panel-toolbar">
+        <span id="segmentCount" class="muted"></span>
+        <div class="panel-toolbar-actions">
+          <!-- 三视图人人都有（中文字幕译成英文，外文字幕译成中文）；顺句只给中文字幕 -->
+          <button id="polishBtn" class="ghost-btn" title="用 AI 补标点、改同音错别字（需先配置 AI 服务）" hidden>顺句</button>
+          <div id="transcriptMode" class="segmented" hidden>
+            <button class="segmented-btn active" data-mode="original">原文</button>
+            <button class="segmented-btn" data-mode="translated">译文</button>
+            <button class="segmented-btn" data-mode="bilingual">双语</button>
+          </div>
+          <button id="searchBtn" class="ghost-btn icon-only" title="在字幕里搜索（快捷键 /）" aria-label="搜索字幕">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="7" cy="7" r="4.75"/>
+              <path d="m10.6 10.6 3.9 3.9"/>
+            </svg>
+          </button>
+          <button id="copyBtn" class="ghost-btn">复制</button>
+          <button id="exportBtn" class="ghost-btn">导出</button>
+        </div>
+      </div>
+      <div id="searchRow" class="search-row" hidden>
+        <input id="searchInput" class="search-input" type="text" placeholder="搜索字幕（原文、顺句稿、译文都会搜）" />
+        <span id="searchCount" class="muted"></span>
+        <button id="searchClose" class="ghost-btn icon-only" title="关闭搜索" aria-label="关闭搜索">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="m3.5 3.5 9 9M12.5 3.5l-9 9"/>
+          </svg>
+        </button>
+      </div>
+      <div id="rewriteProgress" class="progress-row" hidden>
+        <div class="progress">
+          <div class="progress-bar" id="rewriteProgressBar"></div>
+        </div>
+        <span class="muted" id="rewriteProgressText"></span>
+      </div>
+      <div id="transcriptList" class="transcript-list"></div>
+      <!-- 手动滚开或在搜索时，给一条随时回到播放位置的路 -->
+      <button id="followPill" class="follow-pill" hidden>
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <circle cx="8" cy="8" r="4.25"/>
+          <circle cx="8" cy="8" r="0.5" fill="currentColor" stroke="none"/>
+          <path d="M8 1.25v2M8 12.75v2M1.25 8h2M12.75 8h2"/>
+        </svg>
+        <span>回到当前句</span>
+      </button>
+    </section>
+
+    <!-- 概览 -->
+    <section id="overviewPanel" hidden>
+      <div id="overviewEmpty" class="state">
+        <p class="state-title">生成 AI 概览</p>
+        <p class="state-text">
+          把整段字幕交给大模型，产出覆盖全片的章节和 3-5 条金句。
+          需要先在设置页配置 AI 服务。
+        </p>
+        <div class="state-actions">
+          <button id="analyzeBtn" class="primary-btn with-icon">
+            <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor" stroke="none" aria-hidden="true">
+              <path d="M7 1.8c.55 2.6 1.5 4.4 4.1 4.95C8.5 7.3 7.55 9.1 7 11.7 6.45 9.1 5.5 7.3 2.9 6.75 5.5 6.2 6.45 4.4 7 1.8Z"/>
+              <path d="M12.6 9.6c.3 1.4.8 2.35 2.2 2.65-1.4.3-1.9 1.25-2.2 2.65-.3-1.4-.8-2.35-2.2-2.65 1.4-.3 1.9-1.25 2.2-2.65Z"/>
+            </svg>
+            <span>生成概览</span>
+          </button>
+        </div>
+      </div>
+
+      <div id="overviewLoading" class="state" hidden>
+        <p class="state-title">正在生成概览…</p>
+        <p class="state-text" id="overviewProgressText">正在准备…</p>
+        <div class="progress" role="progressbar" aria-labelledby="overviewProgressText">
+          <div class="progress-bar" id="overviewProgressBar"></div>
+        </div>
+        <p class="state-text muted-small">
+          长视频会切成多块并发生成，可在设置页调整并发数。
+        </p>
+      </div>
+
+      <div id="overviewResult" hidden>
+        <div class="panel-toolbar">
+          <span id="overviewMeta" class="muted"></span>
+          <div class="panel-toolbar-actions">
+            <button id="reanalyzeBtn" class="ghost-btn">重新生成</button>
+          </div>
+        </div>
+        <h2 class="section-heading">章节</h2>
+        <div id="chapterList" class="chapter-list"></div>
+        <h2 class="section-heading">金句</h2>
+        <div id="quoteList" class="quote-list"></div>
+      </div>
+    </section>
+
+    <!-- 笔记 -->
+    <section id="notesPanel" hidden>
+      <div class="panel-toolbar">
+        <div class="segmented">
+          <button id="notesScopeVideo" class="segmented-btn active">本视频</button>
+          <button id="notesScopeAll" class="segmented-btn">全部</button>
+        </div>
+        <span id="notesCount" class="muted"></span>
+      </div>
+      <div id="notesList" class="notes-list"></div>
+      <div id="notesEmpty" class="state" hidden>
+        <svg class="icon state-icon" aria-hidden="true"><use href="#i-note"/></svg>
+        <p id="notesEmptyTitle" class="state-title">还没有笔记</p>
+        <p class="state-text">
+          播放时点播放器上的「笔记」按钮，或按 <kbd>n</kbd>，
+          就能记下当前时间点的一条笔记。
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <!-- 划词解释浮层 -->
+  <div id="explainTooltip" class="explain-tooltip" hidden>
+    <button id="explainBtn" class="explain-trigger">解释</button>
+  </div>
+  <div id="explainPopover" class="explain-popover" hidden>
+    <div class="explain-popover-head">
+      <span id="explainTerm" class="explain-term"></span>
+      <button id="explainClose" class="icon-btn" title="关闭" aria-label="关闭">
+        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="m3.5 3.5 9 9M12.5 3.5l-9 9"/>
+        </svg>
+      </button>
+    </div>
+    <p id="explainBody" class="explain-body"></p>
+  </div>
+
+  <!-- lib/ai.js 用到 transcript 的时间戳格式化，必须先加载 -->
+  <script src="lib/transcript.js"></script>
+  <script src="lib/ai.js"></script>
+  <script src="lib/concurrency.js"></script>
+  <script src="settings.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>

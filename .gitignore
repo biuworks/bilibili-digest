@@ -1,0 +1,9 @@
+node_modules/
+*.zip
+*.crx
+.DS_Store
+*.log
+
+# 上游参考源码是本地 git clone，不进入本仓库历史
+# （获取：git clone https://github.com/zarazhangrui/youtube-digest references/youtube-digest）
+references/

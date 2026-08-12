@@ -1,0 +1,1273 @@
+/**
+ * Bilibili Digest — 侧边栏：字幕 / 概览 / 笔记三个标签页。
+ *
+ * 字幕区三视图（原文 / 译文 / 双语）人人都有，翻译方向由字幕语种决定；
+ * 「顺句」只给中文字幕，且与三视图可叠加（开着顺句时原文指顺句稿）。
+ * 侧边栏是全窗口共享的，标签页查询都限定在本面板所属窗口内。
+ */
+
+"use strict";
+
+const POLL_INTERVAL_MS = 1000;
+// 用户手动滚动后先别抢滚动条；有「回到当前句」浮标兜底，这个窗口可以放宽。
+const AUTOSCROLL_SUPPRESS_MS = 8000;
+
+const state = {
+  windowId: null,
+  tabId: null,
+  bvid: null,
+  page: 1,
+  data: null,
+  analysis: null,
+  polished: {}, // 分段 id → 顺句后的文字
+  polishMode: false,
+  translated: {}, // 分段 id → 译文（中文字幕对应英文，外文字幕对应中文）
+  transcriptMode: "original", // original | translated | bilingual
+  isChinese: true, // 决定顺句入口的有无与翻译方向的提示
+  polishRun: 0, // 换视频/切换显示方式时自增，用来作废进行中的批次
+  view: "idle", // idle | loading | error | ready
+  errorResult: null,
+  tab: "transcript",
+  notesScope: "video", // video | all
+  activeIndex: -1,
+  lastUserScrollAt: 0,
+  lastAutoScrollAt: 0,
+  searchQuery: "", // 搜索期间暂停自动跟随，命中行之外全部藏起
+};
+
+const el = (id) => document.getElementById(id);
+
+// 字幕行的 DOM 索引，renderSegments 时重建。直接持有节点引用让查找变 O(1)：
+// 用 querySelector 找行的话，上千段的视频全量重画就是 O(n²)，切视图会卡。
+const segmentView = {
+  rows: [], // 与 segments 同下标
+  byId: new Map(), // 分段 id → { row, text }
+  activeRow: null,
+};
+
+// ============================================================
+// 渲染调度
+// ============================================================
+
+const SECTIONS = [
+  "loadingState",
+  "idleState",
+  "errorState",
+  "transcriptPanel",
+  "overviewPanel",
+  "notesPanel",
+];
+
+// 笔记独立于字幕管线：即使字幕拉取失败，之前存的笔记也应该能看。
+function render() {
+  for (const id of SECTIONS) el(id).hidden = true;
+
+  if (state.tab === "notes") {
+    el("notesPanel").hidden = false;
+    return;
+  }
+  if (state.view !== "ready") {
+    el(`${state.view}State`).hidden = false;
+    return;
+  }
+  el(state.tab === "overview" ? "overviewPanel" : "transcriptPanel").hidden = false;
+}
+
+function setView(view, errorResult = null) {
+  state.view = view;
+  state.errorResult = errorResult;
+
+  if (view === "error" && errorResult) {
+    const needLogin = errorResult.error === "NEED_LOGIN";
+    el("errorTitle").textContent = needLogin ? "字幕需要登录" : "没能取到字幕";
+    el("errorText").textContent =
+      errorResult.message || errorResult.error || "未知错误，请重试。";
+    el("errorLoginLink").hidden = !needLogin;
+  }
+  render();
+}
+
+function switchTab(tab) {
+  state.tab = tab;
+  for (const button of document.querySelectorAll(".tab")) {
+    button.classList.toggle("active", button.dataset.tab === tab);
+  }
+  hideExplain();
+  updateFollowPill();
+  if (tab === "notes") loadNotes();
+  render();
+}
+
+// ============================================================
+// 当前标签页
+// ============================================================
+
+// 播放页是 /video/BVxxx，合集播放页把 BV 号放在 ?bvid= 里，两种都要认。
+function parseBvid(url) {
+  const text = String(url || "");
+  if (!text.includes("bilibili.com")) return null;
+  const match = text.match(/BV[0-9A-Za-z]{10}/);
+  return match ? match[0] : null;
+}
+
+function parsePage(url) {
+  const match = String(url || "").match(/[?&]p=(\d+)/);
+  const page = match ? Number(match[1]) : 1;
+  return Number.isFinite(page) && page > 0 ? page : 1;
+}
+
+async function activeTab() {
+  const [tab] = await chrome.tabs.query({ active: true, windowId: state.windowId });
+  return tab || null;
+}
+
+// 跟随当前标签页：换了视频就重新取字幕，不是播放页就回到提示态。
+async function syncWithActiveTab({ force = false } = {}) {
+  const tab = await activeTab();
+  const bvid = parseBvid(tab?.url);
+
+  if (!bvid) {
+    state.bvid = null;
+    state.data = null;
+    state.analysis = null;
+    setView("idle");
+    return;
+  }
+
+  const page = parsePage(tab.url);
+  const unchanged = bvid === state.bvid && page === state.page && state.data;
+  state.tabId = tab.id;
+  state.bvid = bvid;
+  state.page = page;
+  if (unchanged && !force) return;
+
+  state.analysis = null;
+  await loadTranscript({ force });
+  if (state.tab === "notes") loadNotes();
+}
+
+// ============================================================
+// 字幕
+// ============================================================
+
+async function loadTranscript({ force = false } = {}) {
+  el("loadingTitle").textContent = "正在获取字幕…";
+  el("loadingSubtitle").textContent = force ? "已跳过缓存" : "";
+  el("videoMeta").hidden = true;
+  setView("loading");
+
+  let result;
+  try {
+    result = await chrome.runtime.sendMessage({
+      action: "fetchTranscript",
+      bvid: state.bvid,
+      page: state.page,
+      forceRefresh: force,
+    });
+  } catch (error) {
+    setView("error", { message: error.message });
+    return;
+  }
+
+  if (!result?.success) {
+    if (result?.videoInfo) renderMeta(result.videoInfo, null, false);
+    setView("error", result);
+    return;
+  }
+
+  state.data = result;
+  state.activeIndex = -1;
+  // 之前顺过的句、翻过的译随缓存一起回来了，直接复用，不必再花一次钱。
+  state.polished = result.polished || {};
+  state.translated = result.translated || {};
+  state.polishRun += 1;
+  // 缓存里有就直接摆出来，否则用户会以为上次白跑了。
+  state.polishMode = Object.keys(state.polished).length > 0;
+  state.isChinese = BILI_TRANSCRIPT.isChineseSubtitle(result.language);
+  state.transcriptMode = Object.keys(state.translated).length > 0 ? "bilingual" : "original";
+  renderMeta(result.videoInfo, result, result.fromCache);
+  renderSegments(result.segments);
+  // 换了视频，上一个视频的搜索词不该继续过滤新列表。
+  closeSearch();
+  updateTranscriptControls();
+  restoreOverview(result.analysis);
+  setView("ready");
+}
+
+function renderMeta(videoInfo, result, fromCache) {
+  el("videoTitle").textContent = videoInfo?.title || "";
+  el("videoOwner").textContent = videoInfo?.owner || "";
+
+  const badge = el("subtitleBadge");
+  if (result) {
+    badge.textContent = `${result.languageLabel || result.language}${result.isAiSubtitle ? " · AI" : ""}`;
+    badge.hidden = false;
+  } else {
+    badge.hidden = true;
+  }
+
+  el("cacheBadge").hidden = !fromCache;
+  el("videoMeta").hidden = false;
+}
+
+function renderSegments(segments = []) {
+  const list = el("transcriptList");
+  list.textContent = "";
+  el("segmentCount").textContent = segmentCountText();
+  segmentView.rows = [];
+  segmentView.byId = new Map();
+  segmentView.activeRow = null;
+
+  const fragment = document.createDocumentFragment();
+  segments.forEach((segment, index) => {
+    const row = document.createElement("div");
+    row.className = "segment";
+    row.dataset.index = String(index);
+    row.dataset.id = segment.id;
+
+    const time = document.createElement("span");
+    time.className = "segment-time";
+    time.textContent = formatTimestamp(segment.start);
+
+    const text = document.createElement("span");
+    text.className = "segment-text";
+    paintSegmentText(text, segment);
+
+    row.append(time, text);
+    row.addEventListener("click", (event) => onEntryClick(event, segment.start));
+    fragment.appendChild(row);
+    segmentView.rows.push(row);
+    segmentView.byId.set(segment.id, { row, text });
+  });
+  list.appendChild(fragment);
+}
+
+// 这一段的「原文」——中文字幕开着顺句时，原文指的是顺句稿。
+function sourceText(segment) {
+  if (state.isChinese && state.polishMode && state.polished[segment.id]) {
+    return state.polished[segment.id];
+  }
+  return segment.text;
+}
+
+// 这一段该显示什么文字。双语模式要两行，不走这里，见 paintSegmentText。
+function segmentDisplayText(segment) {
+  if (state.transcriptMode === "translated") {
+    // 还没翻到这一段时先摆原文，比留一片空白好读。
+    return state.translated[segment.id] || sourceText(segment);
+  }
+  return sourceText(segment);
+}
+
+// 把文字写进节点，命中搜索词的部分套上 <mark>。字幕是外部内容，
+// 一律 textContent 逐节点写、不拼 HTML；没有搜索词时走快路径。
+function writeText(node, text) {
+  const query = state.searchQuery;
+  const source = String(text || "");
+  if (!query) {
+    node.textContent = source;
+    return;
+  }
+
+  const lower = source.toLowerCase();
+  let cursor = 0;
+  node.textContent = "";
+  for (let at = lower.indexOf(query); at >= 0; at = lower.indexOf(query, cursor)) {
+    if (at > cursor) {
+      const plain = document.createElement("span");
+      plain.textContent = source.slice(cursor, at);
+      node.appendChild(plain);
+    }
+    const hit = document.createElement("mark");
+    hit.className = "search-hit";
+    hit.textContent = source.slice(at, at + query.length);
+    node.appendChild(hit);
+    cursor = at + query.length;
+  }
+
+  // 一条也没命中：双语的另一行命中了，这一行照常显示。
+  if (cursor === 0) {
+    node.textContent = source;
+    return;
+  }
+  if (cursor < source.length) {
+    const tail = document.createElement("span");
+    tail.textContent = source.slice(cursor);
+    node.appendChild(tail);
+  }
+}
+
+function paintSegmentText(node, segment) {
+  if (state.transcriptMode === "bilingual") {
+    node.textContent = "";
+    const source = document.createElement("span");
+    source.className = "segment-source";
+    writeText(source, sourceText(segment));
+
+    const translation = document.createElement("span");
+    const ready = state.translated[segment.id];
+    translation.className = ready
+      ? "segment-translation"
+      : "segment-translation pending";
+    if (ready) writeText(translation, ready);
+    else translation.textContent = "翻译中…";
+
+    node.append(source, translation);
+    return;
+  }
+  writeText(node, segmentDisplayText(segment));
+}
+
+function formatTimestamp(seconds) {
+  const total = Math.max(0, Math.floor(Number(seconds) || 0));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
+// 用户正在选词时，点击不应该被当成跳转。
+function hasTextSelection() {
+  const selection = window.getSelection();
+  return !!selection && selection.rangeCount > 0 && !selection.isCollapsed;
+}
+
+function onEntryClick(event, seconds) {
+  if (hasTextSelection()) {
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  seekTo(seconds);
+}
+
+async function seekTo(seconds) {
+  if (!state.tabId) return;
+  try {
+    await chrome.tabs.sendMessage(state.tabId, {
+      action: "seekTo",
+      seconds: Math.floor(seconds),
+    });
+  } catch (error) {
+    // 页面刚刷新时 content script 可能还没就位，忽略即可。
+  }
+}
+
+// ============================================================
+// 播放进度跟随
+// ============================================================
+
+function highlightActive(currentSeconds) {
+  const segments = state.data?.segments || [];
+  if (!segments.length || state.tab !== "transcript") return;
+
+  // 分段按开始时间有序，二分找「最后一个 start <= 当前时刻」的下标。
+  let low = 0;
+  let high = segments.length - 1;
+  let index = -1;
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    if (segments[mid].start <= currentSeconds) {
+      index = mid;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  if (index === state.activeIndex) return;
+
+  segmentView.activeRow?.classList.remove("active");
+  state.activeIndex = index;
+  segmentView.activeRow = index >= 0 ? segmentView.rows[index] || null : null;
+  if (!segmentView.activeRow) return;
+  segmentView.activeRow.classList.add("active");
+
+  // 搜索时列表被过滤过，滚动条属于搜索结果，不抢。
+  if (state.searchQuery) return;
+  if (Date.now() - state.lastUserScrollAt < AUTOSCROLL_SUPPRESS_MS) return;
+  state.lastAutoScrollAt = Date.now();
+  segmentView.activeRow.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+async function trackPlayback() {
+  if (!state.tabId || !state.data || state.view !== "ready") return;
+  try {
+    const response = await chrome.tabs.sendMessage(state.tabId, {
+      action: "getPlaybackTime",
+    });
+    if (response) highlightActive(Number(response.currentTime) || 0);
+  } catch (error) {
+    // content script 不在（页面正在跳转）——下一轮再试。
+  }
+  // 挂在轮询里而不是滚动事件里，抑制窗口过期后浮标才能自己消失。
+  updateFollowPill();
+}
+
+// ============================================================
+// 「回到当前句」浮标 + 字幕搜索
+// ============================================================
+
+// 自动跟随停下来时（用户滚开了，或正在搜索），给一条一键回到播放位置的路。
+function updateFollowPill() {
+  const suppressed = Date.now() - state.lastUserScrollAt < AUTOSCROLL_SUPPRESS_MS;
+  const show =
+    state.view === "ready" &&
+    state.tab === "transcript" &&
+    state.activeIndex >= 0 &&
+    (Boolean(state.searchQuery) || suppressed);
+  el("followPill").hidden = !show;
+}
+
+function scrollToActive() {
+  const row = segmentView.rows[state.activeIndex];
+  if (!row) return;
+  // 记一笔，免得这次滚动被滚动监听当成「用户滚开了」。
+  state.lastAutoScrollAt = Date.now();
+  row.scrollIntoView({ block: "center", behavior: "smooth" });
+}
+
+function jumpToActive() {
+  // 从搜索结果跳回来时顺手收掉搜索，否则当前句多半被过滤藏着；
+  // closeSearch 自己会把视线送回当前句，这里不必再滚一次。
+  if (state.searchQuery) closeSearch();
+  else scrollToActive();
+  state.lastUserScrollAt = 0;
+  updateFollowPill();
+}
+
+// 搜索匹配「屏幕上可能出现过的所有文字」：原文、顺句稿、译文。
+function segmentSearchText(segment) {
+  return [segment.text, state.polished[segment.id], state.translated[segment.id]]
+    .filter(Boolean)
+    .join("\n")
+    .toLowerCase();
+}
+
+function applySearchFilter(query) {
+  state.searchQuery = String(query || "").trim().toLowerCase();
+  const segments = state.data?.segments || [];
+
+  let hits = 0;
+  let firstHit = null;
+  segments.forEach((segment, index) => {
+    const match =
+      !state.searchQuery || segmentSearchText(segment).includes(state.searchQuery);
+    if (match) {
+      hits += 1;
+      if (!firstHit) firstHit = segmentView.rows[index] || null;
+    }
+    const row = segmentView.rows[index];
+    if (row) row.hidden = !match;
+  });
+
+  // 重画是为了给命中的字套上 <mark>，光靠过滤眼睛没有落点。
+  repaintSegmentText();
+  el("searchCount").textContent = state.searchQuery ? `${hits} 条命中` : "";
+
+  // 滚到首个命中行，否则用户看到一片空白会以为搜索没生效。
+  // 逐键过滤时用瞬时滚动，平滑动画会互相打架。
+  if (state.searchQuery && firstHit) {
+    state.lastAutoScrollAt = Date.now();
+    firstHit.scrollIntoView({ block: "center", behavior: "auto" });
+  }
+  updateFollowPill();
+}
+
+function openSearch() {
+  el("searchRow").hidden = false;
+  el("searchInput").focus?.();
+}
+
+function closeSearch() {
+  el("searchRow").hidden = true;
+  el("searchInput").value = "";
+  applySearchFilter("");
+  // 收起搜索后视线还留在某条命中上，把它送回正在播的那句。
+  scrollToActive();
+}
+
+// ============================================================
+// 进度条
+// ============================================================
+
+const PROGRESS_NODES = {
+  // 顺句和翻译按语种二选一，同一时刻只会有一个在跑，共用这一条进度。
+  rewrite: { row: "rewriteProgress", bar: "rewriteProgressBar", text: "rewriteProgressText" },
+  analysis: { row: null, bar: "overviewProgressBar", text: "overviewProgressText" },
+};
+
+function showProgress(kind, done, total) {
+  const nodes = PROGRESS_NODES[kind];
+  if (!nodes) return;
+  if (nodes.row) el(nodes.row).hidden = false;
+
+  const percent = total > 0 ? Math.round((done / total) * 100) : 0;
+  el(nodes.bar).style.width = `${percent}%`;
+  el(nodes.text).textContent =
+    total > 0 ? `${done}/${total} 批完成（${percent}%）` : "正在准备…";
+}
+
+function hideProgress(kind) {
+  const nodes = PROGRESS_NODES[kind];
+  if (!nodes) return;
+  if (nodes.row) el(nodes.row).hidden = true;
+  el(nodes.bar).style.width = "0%";
+}
+
+// 设置在设置页改动后不会自动同步过来，每次用之前读一遍。
+async function loadSettings() {
+  const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+  return BILI_SETTINGS.normalize(stored[BILI_SETTINGS.STORAGE_KEY]);
+}
+
+function segmentCountText() {
+  return `${state.data?.segments?.length || 0} 段`;
+}
+
+// 借分段计数那一行显示临时提示，几秒后还原。
+function showSegmentNotice(message) {
+  el("segmentCount").textContent = message;
+  setTimeout(() => {
+    el("segmentCount").textContent = segmentCountText();
+  }, 5000);
+}
+
+// 顺句只给中文字幕（外文字幕本来就带标点）；顺句和翻译任何一个在跑时
+// 两套控件都锁住，免得两轮改写互相踩对方的批次。
+function updateTranscriptControls(running) {
+  const busy = Boolean(running);
+
+  const button = el("polishBtn");
+  button.hidden = !state.isChinese;
+  button.disabled = busy;
+  button.textContent =
+    running === "polish" ? "顺句中" : state.polishMode ? "原文" : "顺句";
+
+  const modes = el("transcriptMode");
+  modes.hidden = !state.data;
+  for (const node of modes.querySelectorAll(".segmented-btn")) {
+    const active = node.dataset.mode === state.transcriptMode;
+    node.classList.toggle("active", active);
+    node.setAttribute("aria-pressed", String(active));
+    node.disabled = busy;
+  }
+}
+
+// 只重画文字，不重建整个列表——重建会丢掉高亮和滚动位置。
+function repaintSegmentText(segmentIds) {
+  const segments = state.data?.segments || [];
+  const wanted = segmentIds ? new Set(segmentIds) : null;
+
+  for (const segment of segments) {
+    if (wanted && !wanted.has(segment.id)) continue;
+    const nodes = segmentView.byId.get(segment.id);
+    if (nodes) paintSegmentText(nodes.text, segment);
+  }
+}
+
+// 顺句和翻译是同一套流程，差异集中在这张表里。
+const REWRITE_KINDS = Object.freeze({
+  polish: {
+    action: "polishSegments",
+    field: "polished",
+    label: "顺句",
+    plan: (segments) => BILI_AI.planPunctuationBatches(segments),
+  },
+  translate: {
+    action: "translateSegments",
+    field: "translated",
+    label: "翻译",
+    plan: (segments) => BILI_AI.planTranslationBatches(segments),
+  },
+});
+
+// 偶发失败（限流、超时抖动）自动补一轮前的等待。太短会撞回同一次限流窗口。
+const REWRITE_RETRY_DELAY_MS = 1500;
+
+async function togglePolish() {
+  if (!state.data) return;
+
+  state.polishMode = !state.polishMode;
+  // 关掉再打开时，上一轮还在飞的批次不应该再往界面上写。
+  state.polishRun += 1;
+  repaintSegmentText();
+  updateTranscriptControls();
+
+  if (state.polishMode) await runRewrite("polish", state.polishRun);
+}
+
+async function setTranscriptMode(mode) {
+  if (!state.data) return;
+  if (!["original", "translated", "bilingual"].includes(mode)) return;
+  if (mode === state.transcriptMode) return;
+
+  state.transcriptMode = mode;
+  state.polishRun += 1;
+  repaintSegmentText();
+  updateTranscriptControls();
+
+  if (mode !== "original") await runRewrite("translate", state.polishRun);
+}
+
+// 从当前播放位置切开、后半段优先：眼前的内容几秒内就有结果，
+// 前面的部分随后补齐——总量和费用完全不变。
+function orderFromPlayback(todo) {
+  const segments = state.data?.segments || [];
+  const active = segments[state.activeIndex];
+  if (!active) return todo;
+
+  const ahead = [];
+  const behind = [];
+  for (const segment of todo) {
+    (segment.start >= active.start ? ahead : behind).push(segment);
+  }
+  return [...ahead, ...behind];
+}
+
+async function runRewrite(kind, run) {
+  const task = REWRITE_KINDS[kind];
+  const segments = state.data?.segments || [];
+  const todo = segments.filter((segment) => !state[task.field][segment.id]);
+  if (!todo.length) {
+    updateTranscriptControls();
+    return;
+  }
+
+  const batches = task.plan(orderFromPlayback(todo));
+  const concurrency = (await loadSettings()).aiConcurrency;
+
+  showProgress("rewrite", 0, batches.length);
+  updateTranscriptControls(kind);
+
+  const runBatch = async (batch) => {
+    if (run !== state.polishRun) return null;
+    const result = await chrome.runtime.sendMessage({
+      action: task.action,
+      bvid: state.bvid,
+      page: state.page,
+      segmentIds: batch.map((segment) => segment.id),
+    });
+    if (!result?.success) throw new Error(result?.message || `${task.label}失败`);
+
+    // 每批一回来就刷到界面上，用户可以边生成边往下读。
+    if (run === state.polishRun) {
+      const done = result[task.field] || {};
+      Object.assign(state[task.field], done);
+      repaintSegmentText(Object.keys(done));
+    }
+    return result;
+  };
+
+  const results = await BILI_CONCURRENCY.mapWithConcurrency(
+    batches,
+    concurrency,
+    runBatch,
+    (done, total) => {
+      if (run === state.polishRun) showProgress("rewrite", done, total);
+    },
+  );
+
+  // 偶发失败（限流、超时抖动）静默补一轮，别让用户手点。
+  // 全军覆没就不补了——那多半是配置错误，重试只会把同一个错误再撞一遍。
+  const failedIndexes = results
+    .map((result, index) => (result.status === "rejected" ? index : -1))
+    .filter((index) => index >= 0);
+  if (
+    failedIndexes.length &&
+    failedIndexes.length < batches.length &&
+    run === state.polishRun
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, REWRITE_RETRY_DELAY_MS));
+    const retried = await BILI_CONCURRENCY.mapWithConcurrency(
+      failedIndexes.map((index) => batches[index]),
+      concurrency,
+      runBatch,
+    );
+    failedIndexes.forEach((batchIndex, i) => {
+      if (retried[i].status === "fulfilled") results[batchIndex] = retried[i];
+    });
+  }
+
+  if (run !== state.polishRun) return;
+  hideProgress("rewrite");
+
+  const failures = results.filter((result) => result.status === "rejected");
+  if (failures.length === batches.length) {
+    // 全失败多半是没配好或被限流，退回原文并说明原因。
+    if (kind === "polish") state.polishMode = false;
+    else state.transcriptMode = "original";
+    repaintSegmentText();
+    showSegmentNotice(failures[0].reason?.message || `${task.label}失败`);
+  } else if (failures.length) {
+    // 部分失败仍保留已成功的部分，剩下的再点一次即可补齐。
+    showSegmentNotice(`${failures.length} 批失败，再点一次「${task.label}」可以补齐。`);
+  }
+  updateTranscriptControls();
+}
+
+// ============================================================
+// AI 概览
+// ============================================================
+
+const OVERVIEW_EMPTY_TITLE = "生成 AI 概览";
+const OVERVIEW_EMPTY_TEXT =
+  "把整段字幕交给大模型，产出覆盖全片的章节和 3-5 条金句。需要先在设置页配置 AI 服务。";
+
+function resetOverview() {
+  state.analysis = null;
+  const empty = el("overviewEmpty");
+  // 上一个视频可能把这里改成了错误提示，换视频时要还原。
+  empty.querySelector(".state-title").textContent = OVERVIEW_EMPTY_TITLE;
+  empty.querySelector(".state-text").textContent = OVERVIEW_EMPTY_TEXT;
+  el("analyzeBtn").textContent = "生成概览";
+  empty.hidden = false;
+  el("overviewLoading").hidden = true;
+  el("overviewResult").hidden = true;
+}
+
+// 概览随字幕缓存一起回来，有就直接摆出来——否则一次已完成的生成会看起来像失败了。
+function restoreOverview(analysis) {
+  resetOverview();
+  if (!analysis) return;
+  state.analysis = analysis;
+  renderAnalysis(analysis, true);
+}
+
+async function analyze({ force = false } = {}) {
+  if (!state.bvid) return;
+  el("overviewEmpty").hidden = true;
+  el("overviewResult").hidden = true;
+  el("overviewLoading").hidden = false;
+  // 分块数量由 background 算，这里先归零，等第一条进度广播回来再填。
+  showProgress("analysis", 0, 0);
+
+  let result;
+  try {
+    result = await chrome.runtime.sendMessage({
+      action: "analyzeTranscript",
+      bvid: state.bvid,
+      page: state.page,
+      forceRefresh: force,
+    });
+  } catch (error) {
+    result = { success: false, message: error.message };
+  }
+
+  el("overviewLoading").hidden = true;
+  hideProgress("analysis");
+
+  if (!result?.success) {
+    // 概览失败不该把整个面板打回错误态——字幕还在，用户可以继续读。
+    el("overviewEmpty").hidden = false;
+    el("overviewEmpty").querySelector(".state-title").textContent = "概览生成失败";
+    el("overviewEmpty").querySelector(".state-text").textContent =
+      result?.message || "请稍后重试。";
+    el("analyzeBtn").textContent = "重试";
+    return;
+  }
+
+  state.analysis = result.analysis;
+  renderAnalysis(result.analysis, result.fromCache, {
+    failedChunks: result.failedChunks,
+  });
+}
+
+function renderAnalysis(analysis, fromCache, { failedChunks = 0 } = {}) {
+  const parts = [
+    `${analysis.chapters.length} 章节`,
+    `${analysis.keyQuotes.length} 金句`,
+  ];
+  if (fromCache) parts.push("缓存");
+  // 部分块失败时结果是不完整的，必须让用户知道，否则他会以为这就是全片概览。
+  if (failedChunks) parts.push(`${failedChunks} 块失败，结果不完整`);
+  el("overviewMeta").textContent = parts.join(" · ");
+
+  const chapters = el("chapterList");
+  chapters.textContent = "";
+  for (const chapter of analysis.chapters) {
+    const card = document.createElement("div");
+    card.className = "chapter";
+
+    const head = document.createElement("div");
+    head.className = "entry-head";
+    const time = document.createElement("span");
+    time.className = "entry-time";
+    time.textContent = chapter.timestamp;
+    const title = document.createElement("span");
+    title.className = "entry-title";
+    title.textContent = chapter.title;
+    head.append(time, title);
+
+    const summary = document.createElement("p");
+    summary.className = "entry-text";
+    summary.textContent = chapter.summary;
+
+    card.append(head, summary);
+    card.addEventListener("click", (event) =>
+      onEntryClick(event, chapter.timestampSeconds),
+    );
+    chapters.appendChild(card);
+  }
+
+  const quotes = el("quoteList");
+  quotes.textContent = "";
+  for (const quote of analysis.keyQuotes) {
+    const card = document.createElement("div");
+    card.className = "quote";
+
+    const head = document.createElement("div");
+    head.className = "entry-head";
+    const time = document.createElement("span");
+    time.className = "entry-time";
+    time.textContent = quote.timestamp;
+    time.addEventListener("click", (event) =>
+      onEntryClick(event, quote.timestampSeconds),
+    );
+    head.appendChild(time);
+
+    const text = document.createElement("p");
+    text.className = "entry-text";
+    text.textContent = quote.quote;
+
+    const actions = document.createElement("div");
+    actions.className = "entry-actions";
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "ghost-btn";
+    saveBtn.textContent = "存为笔记";
+    saveBtn.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      saveBtn.disabled = true;
+      saveBtn.textContent = "保存中…";
+      // 金句已经是模型整理过的文本，直接落库，不必再润色一遍。
+      const result = await chrome.runtime.sendMessage({
+        action: "saveNote",
+        bvid: state.bvid,
+        page: state.page,
+        timestamp: quote.timestampSeconds,
+        text: quote.quote,
+      });
+      saveBtn.textContent = result?.success ? "已保存" : "保存失败";
+      setTimeout(() => {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "存为笔记";
+      }, 1500);
+    });
+    actions.appendChild(saveBtn);
+
+    card.append(head, text, actions);
+    quotes.appendChild(card);
+  }
+
+  el("overviewEmpty").hidden = true;
+  el("overviewResult").hidden = false;
+}
+
+// ============================================================
+// 笔记
+// ============================================================
+
+async function loadNotes() {
+  const result = await chrome.runtime.sendMessage({
+    action: "getNotes",
+    bvid: state.notesScope === "video" ? state.bvid : null,
+  });
+  renderNotes(result?.notes || []);
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+// 引用 sidepanel.html 顶部雪碧图里的一个图形。
+function icon(name) {
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "icon");
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS(SVG_NS, "use");
+  use.setAttribute("href", `#i-${name}`);
+  svg.appendChild(use);
+  return svg;
+}
+
+function actionButton({ iconName, label, title, onClick }) {
+  const button = document.createElement("button");
+  button.className = "ghost-btn";
+  button.title = title || label;
+  button.appendChild(icon(iconName));
+  if (label) {
+    const text = document.createElement("span");
+    text.textContent = label;
+    button.appendChild(text);
+  } else {
+    button.classList.add("icon-only");
+    button.setAttribute("aria-label", title);
+  }
+  // 把按钮直接递给回调。事件派发结束后 event.currentTarget 会被清空，
+  // 回调里一 await（写剪贴板就是）再去读它，拿到的是 null。
+  button.addEventListener("click", () => onClick(button));
+  return button;
+}
+
+function flashActionButton(button, message) {
+  const label = button.querySelector("span");
+  if (!label) return;
+  const original = label.textContent;
+  label.textContent = message;
+  setTimeout(() => {
+    label.textContent = original;
+  }, 1500);
+}
+
+function renderNotes(notes) {
+  el("notesCount").textContent = notes.length ? `${notes.length} 条` : "";
+  el("notesEmpty").hidden = notes.length > 0;
+  // 「本视频」下空着，多半只是这个视频没记过，别让人以为笔记全丢了。
+  el("notesEmptyTitle").textContent =
+    state.notesScope === "video" ? "这个视频还没有笔记" : "还没有任何笔记";
+
+  const list = el("notesList");
+  list.textContent = "";
+  for (const note of notes) list.appendChild(renderNoteCard(note));
+}
+
+function renderNoteCard(note) {
+  const card = document.createElement("div");
+  card.className = "note";
+
+  // 状态提示（视频已下架之类）常驻在卡片底部，平时藏着。
+  const notice = document.createElement("p");
+  notice.className = "note-notice";
+  notice.hidden = true;
+  // 后台还在润色时说一声，不然正文过几秒突然变了会让人纳闷。
+  // 时间上限挡住润色中途 service worker 被回收留下的僵尸标记。
+  if (note.pending && Date.now() - note.createdAt < 3 * 60 * 1000) {
+    setNoteNotice(notice, "AI 正在润色这条笔记…", "muted");
+  }
+  const play = () => playNote(note, notice);
+
+  const head = document.createElement("div");
+  head.className = "entry-head";
+
+  // 时间戳做成按钮才看得出来能点。
+  const time = document.createElement("button");
+  time.className = "entry-time time-btn";
+  time.textContent = note.timestamp;
+  time.title = "跳到这个时间点";
+  time.addEventListener("click", play);
+
+  const remove = actionButton({
+    iconName: "trash",
+    title: "删除这条笔记",
+    onClick: async () => {
+      await chrome.runtime.sendMessage({ action: "deleteNote", noteId: note.id });
+      loadNotes();
+    },
+  });
+  remove.classList.add("note-delete");
+
+  head.append(time, remove);
+
+  const text = document.createElement("p");
+  text.className = "entry-text";
+  text.textContent = note.text;
+
+  const away = note.bvid !== state.bvid;
+
+  // 看的就是这个视频时，再写一遍标题和 UP 主是废话，白占一行。
+  const meta = document.createElement("p");
+  meta.className = "note-meta";
+  meta.textContent = away
+    ? [note.videoTitle, note.ownerName].filter(Boolean).join(" · ")
+    : "";
+  meta.hidden = !meta.textContent;
+
+  const actions = document.createElement("div");
+  actions.className = "entry-actions";
+  // 别的视频的笔记要开新标签页，图标换成「外链」，免得点下去才发现跳走了。
+  actions.append(
+    actionButton({
+      iconName: away ? "external" : "play",
+      label: away ? "打开" : "播放",
+      title: away ? "在新标签页打开原视频并跳到这一刻" : "跳到这个时间点",
+      onClick: play,
+    }),
+    actionButton({
+      iconName: "copy",
+      label: "复制",
+      title: "复制笔记正文",
+      onClick: async (button) => {
+        await navigator.clipboard.writeText(note.text);
+        flashActionButton(button, "已复制");
+      },
+    }),
+    actionButton({
+      iconName: "link",
+      label: "链接",
+      title: "复制带时间戳的视频链接",
+      onClick: async (button) => {
+        await navigator.clipboard.writeText(note.timestampedUrl);
+        flashActionButton(button, "已复制");
+      },
+    }),
+  );
+
+  card.append(head, text, meta, actions, notice);
+  return card;
+}
+
+function setNoteNotice(notice, message, tone = "warn") {
+  notice.className = `note-notice ${tone}`;
+  notice.textContent = message;
+  notice.hidden = !message;
+}
+
+// 同一个视频就地跳转；别的视频开新标签页，开之前先问一句视频还在不在。
+async function playNote(note, notice) {
+  if (note.bvid === state.bvid) {
+    seekTo(note.timestampSeconds);
+    return;
+  }
+
+  setNoteNotice(notice, "正在确认视频是否还在…", "muted");
+  const result = await chrome.runtime.sendMessage({
+    action: "checkVideoAvailable",
+    bvid: note.bvid,
+  });
+
+  if (result?.available === false) {
+    setNoteNotice(notice, result.message || "视频已下架，无法查看原视频。");
+    return;
+  }
+  setNoteNotice(notice, "");
+  chrome.tabs.create({ url: note.timestampedUrl });
+}
+
+function setNotesScope(scope) {
+  state.notesScope = scope;
+  el("notesScopeVideo").classList.toggle("active", scope === "video");
+  el("notesScopeAll").classList.toggle("active", scope === "all");
+  loadNotes();
+}
+
+// ============================================================
+// 划词解释
+// ============================================================
+
+let pendingSelection = "";
+
+function hideExplain() {
+  el("explainTooltip").hidden = true;
+  el("explainPopover").hidden = true;
+}
+
+// 选中字幕里的一段文字后，在选区旁边浮出「解释」按钮。
+function onSelectionChange() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || !selection.rangeCount) {
+    el("explainTooltip").hidden = true;
+    return;
+  }
+
+  const text = selection.toString().trim();
+  const container = selection.anchorNode?.parentElement;
+  if (!text || text.length > 200 || !container?.closest(".content")) {
+    el("explainTooltip").hidden = true;
+    return;
+  }
+
+  pendingSelection = text;
+  const rect = selection.getRangeAt(0).getBoundingClientRect();
+  const tooltip = el("explainTooltip");
+  tooltip.hidden = false;
+  tooltip.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 80))}px`;
+  tooltip.style.top = `${Math.max(8, rect.top - 36)}px`;
+}
+
+// 给模型的上下文：选中处所在段落及前后各一段。用户选中的是屏幕上显示的文字，
+// 开着顺句或翻译时那不是原文，所以原文、顺句稿、译文都要找。
+function selectionContext(selected) {
+  const segments = state.data?.segments || [];
+  const index = segments.findIndex(
+    (segment) =>
+      segment.text.includes(selected) ||
+      (state.polished[segment.id] || "").includes(selected) ||
+      (state.translated[segment.id] || "").includes(selected),
+  );
+  if (index === -1) return state.data?.transcriptText?.slice(0, 2000) || "";
+  return segments
+    .slice(Math.max(0, index - 1), index + 2)
+    .map((segment) => segmentDisplayText(segment))
+    .join(" ");
+}
+
+async function explainSelection() {
+  const selected = pendingSelection;
+  if (!selected) return;
+
+  el("explainTooltip").hidden = true;
+  el("explainTerm").textContent = selected;
+  el("explainBody").textContent = "正在解释…";
+  el("explainPopover").hidden = false;
+
+  const result = await chrome.runtime.sendMessage({
+    action: "explainSelection",
+    selectedText: selected,
+    transcriptContext: selectionContext(selected),
+    videoTitle: state.data?.videoInfo?.title || "",
+  });
+
+  el("explainBody").textContent = result?.success
+    ? result.explanation
+    : result?.message || "解释失败，请重试。";
+}
+
+// ============================================================
+// 复制 / 导出
+// ============================================================
+
+// 导出跟着界面走：看到的是哪一份，导出的就是哪一份。
+function transcriptAsText() {
+  const bilingual = state.transcriptMode === "bilingual";
+  return (state.data?.segments || [])
+    .map((segment) => {
+      const stamp = `[${formatTimestamp(segment.start)}]`;
+      if (!bilingual) return `${stamp} ${segmentDisplayText(segment)}`;
+      const source = sourceText(segment);
+      const translated = state.translated[segment.id];
+      return translated
+        ? `${stamp} ${source}\n${" ".repeat(stamp.length)} ${translated}`
+        : `${stamp} ${source}`;
+    })
+    .join("\n");
+}
+
+function flashButton(button, text) {
+  const original = button.textContent;
+  button.textContent = text;
+  setTimeout(() => {
+    button.textContent = original;
+  }, 1500);
+}
+
+async function copyTranscript() {
+  if (!state.data) return;
+  try {
+    await navigator.clipboard.writeText(transcriptAsText());
+    flashButton(el("copyBtn"), "已复制");
+  } catch (error) {
+    flashButton(el("copyBtn"), "复制失败");
+  }
+}
+
+function exportTranscript() {
+  if (!state.data) return;
+  const title = state.data.videoInfo?.title || state.bvid;
+  const header = `${title}\n${state.data.videoInfo?.owner || ""}\nhttps://www.bilibili.com/video/${state.bvid}\n\n`;
+  const blob = new Blob([header + transcriptAsText()], {
+    type: "text/plain;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${sanitizeFilename(title)}.txt`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function sanitizeFilename(name) {
+  return String(name).replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "transcript";
+}
+
+// ============================================================
+// 启动
+// ============================================================
+
+function setupEventListeners() {
+  el("refreshBtn").addEventListener("click", () => {
+    if (state.bvid) loadTranscript({ force: true });
+  });
+  el("optionsBtn").addEventListener("click", () => chrome.runtime.openOptionsPage());
+  el("errorRetryBtn").addEventListener("click", () => loadTranscript({ force: true }));
+  el("polishBtn").addEventListener("click", togglePolish);
+  for (const button of el("transcriptMode").querySelectorAll(".segmented-btn")) {
+    button.addEventListener("click", () => setTranscriptMode(button.dataset.mode));
+  }
+  el("copyBtn").addEventListener("click", copyTranscript);
+  el("exportBtn").addEventListener("click", exportTranscript);
+  el("searchBtn").addEventListener("click", () => {
+    if (el("searchRow").hidden) openSearch();
+    else closeSearch();
+  });
+  el("searchClose").addEventListener("click", closeSearch);
+  el("searchInput").addEventListener("input", (event) => {
+    applySearchFilter(event.target.value);
+  });
+  el("searchInput").addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeSearch();
+  });
+  el("followPill").addEventListener("click", jumpToActive);
+  // 「/」唤起搜索——正在别的输入框里打字时不抢。
+  document.addEventListener("keydown", (event) => {
+    const tag = event.target?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (event.key === "/" && state.tab === "transcript" && state.view === "ready") {
+      event.preventDefault();
+      openSearch();
+    }
+  });
+  el("analyzeBtn").addEventListener("click", () => analyze());
+  el("reanalyzeBtn").addEventListener("click", () => analyze({ force: true }));
+  el("notesScopeVideo").addEventListener("click", () => setNotesScope("video"));
+  el("notesScopeAll").addEventListener("click", () => setNotesScope("all"));
+  el("explainBtn").addEventListener("click", explainSelection);
+  el("explainClose").addEventListener("click", hideExplain);
+
+  // 按下鼠标就会清空选区，进而触发 selectionchange 把这个按钮藏掉，
+  // click 根本没机会发生。阻止默认行为，选区才能活到点击那一刻。
+  el("explainTooltip").addEventListener("mousedown", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+  });
+
+  for (const button of document.querySelectorAll(".tab")) {
+    button.addEventListener("click", () => switchTab(button.dataset.tab));
+  }
+
+  document.addEventListener("selectionchange", onSelectionChange);
+
+  document.querySelector(".content").addEventListener(
+    "scroll",
+    () => {
+      // 刚刚是我们自己滚的就不算用户操作。
+      if (Date.now() - state.lastAutoScrollAt > 1000) {
+        state.lastUserScrollAt = Date.now();
+        updateFollowPill();
+      }
+    },
+    { passive: true },
+  );
+
+  chrome.tabs.onActivated.addListener(({ windowId }) => {
+    if (windowId === state.windowId) syncWithActiveTab();
+  });
+
+  // B 站换视频走 pushState，Chrome 会以 changeInfo.url 的形式上报。
+  // 不比对 tabId：syncWithActiveTab 自己会解析当前活动标签页，没变就直接返回。
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.url) syncWithActiveTab();
+  });
+
+  chrome.runtime.onMessage.addListener((message) => {
+    if (message?.action === "startDigestFromButton") syncWithActiveTab();
+    if (message?.action === "noteSaved" && state.tab === "notes") loadNotes();
+    // 笔记先存原始字幕、润色好了再替换正文，所以还有第二次刷新。
+    if (message?.action === "noteUpdated" && state.tab === "notes") loadNotes();
+    // 概览的分块在 background 里跑，进度只能靠它广播回来。
+    if (message?.action === "aiProgress") {
+      showProgress(message.kind, message.done, message.total);
+    }
+    return false;
+  });
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
+  state.windowId = (await chrome.windows.getCurrent()).id;
+  setupEventListeners();
+  setInterval(trackPlayback, POLL_INTERVAL_MS);
+  await syncWithActiveTab();
+});

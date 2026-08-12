@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>Bilibili Digest 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <main class="page">
+    <h1>Bilibili Digest 设置</h1>
+
+    <section class="card">
+      <h2>字幕</h2>
+      <p class="hint">
+        字幕直接取自 B 站官方接口，<strong>不需要任何密钥</strong>。
+        但 B 站的字幕（尤其是 AI 字幕）需要登录后才可见，
+        所以请先在浏览器里登录 B 站账号。
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>AI 服务</h2>
+      <p class="hint">
+        字幕顺句、AI 概览、划词解释和笔记润色需要一个大模型服务。
+        选好服务商后填密钥和模型即可，地址已经内置；
+        列表里没有的服务选「自定义」，可以自己填地址和协议。
+        密钥只保存在本机的扩展存储里，只会发送给所选服务商的地址。
+      </p>
+
+      <label class="field">
+        <span class="field-label">服务商</span>
+        <select id="preset"></select>
+        <span class="field-hint" id="presetHint"></span>
+      </label>
+
+      <div id="customFields" hidden>
+        <label class="field">
+          <span class="field-label">API 协议</span>
+          <select id="protocol">
+            <option value="openai">OpenAI 兼容（绝大多数服务）</option>
+            <option value="anthropic">Anthropic（Claude）</option>
+          </select>
+          <span class="field-hint">
+            不确定就选 OpenAI 兼容——除 Claude 外的主流服务几乎都是这个形状。
+          </span>
+        </label>
+
+        <label class="field">
+          <span class="field-label">API 地址（base_url）</span>
+          <input id="aiBaseUrl" type="url" autocomplete="off" spellcheck="false"
+                 placeholder="https://api.example.com/v1">
+          <span class="field-hint">
+            填到版本号为止即可，扩展会自动接上
+            <code id="endpointPreview">/chat/completions</code>。
+            明文 http 只允许本机地址（如 Ollama）。
+          </span>
+        </label>
+      </div>
+
+      <label class="field">
+        <span class="field-label">API Key</span>
+        <input id="aiApiKey" type="password" autocomplete="off" spellcheck="false"
+               placeholder="sk-...">
+        <span class="field-hint">连本地服务时可以留空。</span>
+      </label>
+
+      <label class="field">
+        <span class="field-label">模型</span>
+        <span class="field-row">
+          <input id="aiModel" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="填模型名，或点右侧按钮拉取" list="modelOptions">
+          <button id="fetchModelsBtn" class="ghost-btn" type="button">拉取模型列表</button>
+        </span>
+        <datalist id="modelOptions"></datalist>
+        <span class="field-hint" id="modelsHint">
+          模型名换代很快，扩展不预置——直接问服务端要当前可用的列表最靠谱。
+        </span>
+      </label>
+
+      <label class="field">
+        <span class="field-label">并发数</span>
+        <input id="aiConcurrency" type="number" min="1" max="8" step="1">
+        <span class="field-hint">
+          顺句和长视频概览会拆成多个请求并行发出。调高能明显缩短等待，
+          但更容易撞上服务商限流；限流返回的错误会让那一批白跑。
+          不确定就保持 3。
+        </span>
+      </label>
+
+      <label class="field">
+        <span class="field-label">单次请求超时（秒）</span>
+        <input id="aiTimeoutSeconds" type="number" min="30" max="600" step="10">
+        <span class="field-hint">
+          超过这个时间就放弃并报错。本地模型或超长视频可以调大。
+        </span>
+      </label>
+
+      <div class="actions">
+        <button id="saveBtn" class="primary-btn" type="button">保存并授权</button>
+        <button id="testBtn" class="ghost-btn" type="button">测试连接</button>
+        <span id="status" class="status" role="status"></span>
+      </div>
+
+      <p class="hint note">
+        点「保存并授权」时，Chrome 会弹窗询问是否允许本扩展访问所选服务商的域名。
+        这是 Chrome 的安全机制：扩展在安装时并不知道你会用哪家服务，
+        所以只能在你选好之后再申请，而且只申请这一个域名。
+      </p>
+    </section>
+  </main>
+
+  <script src="settings.js"></script>
+  <script src="lib/ai-provider.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

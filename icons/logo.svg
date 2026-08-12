@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!--
+    Bilibili Digest logo 源稿。icon16/48/128.png 由它光栅化而来。
+
+    设计：B 站粉（#fb7299，界面里的 --accent）圆角方底 + 白色字幕卡片，
+    卡片里是播放三角和一行字幕 - 「视频字幕 → 学习摘要」。
+    所有形状都足够粗壮，16×16 下仍可辨认；没有文字，没有细节装饰。
+
+    重新生成 PNG 用任何 SVG 转 PNG 工具都行；当年的生成脚本
+    scripts/build-icons.js（sharp 光栅化，含小尺寸 density 处理）已删除，
+    需要时可从 git 历史找回。
+  -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#fb7299"/>
+      <stop offset="1" stop-color="#ef5f8b"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="url(#bg)"/>
+  <rect x="20" y="28" width="88" height="72" rx="16" fill="#ffffff"/>
+  <path d="M54 44 L82 59 L54 74 Z" fill="#fb7299"/>
+  <rect x="34" y="82" width="40" height="9" rx="4.5" fill="#fb7299"/>
+  <rect x="80" y="82" width="14" height="9" rx="4.5" fill="#fb7299" opacity="0.45"/>
+</svg>
