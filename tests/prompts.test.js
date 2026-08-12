@@ -16,6 +16,8 @@ const backgroundSource = fs.readFileSync(path.join(root, "background.js"), "utf8
  */
 const PROMPTS = {
   "analysis.md": {
+    startFormatted: "0:00",
+    minTimestampSeconds: 0,
     durationFormatted: "10:00",
     lateThreshold: "7:30",
     maxTimestampSeconds: 600,
@@ -24,6 +26,7 @@ const PROMPTS = {
     videoDescription: "测试简介",
     transcriptText: "[0:00] 测试字幕",
     rangeNote: "这是第 1 / 3 段",
+    contextNote: "前情回顾：[0:00] 上一段的结尾",
   },
   "explain.md": {
     videoTitle: "测试标题",

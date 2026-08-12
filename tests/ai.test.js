@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const AI = require("../lib/ai.js");
+const TRANSCRIPT = require("../lib/transcript.js");
 
 // ============================================================
 // 提示词模板
@@ -268,6 +269,65 @@ test("没有分段时返回空数组", () => {
   assert.deepEqual(AI.planAnalysisChunks([]), []);
   assert.deepEqual(AI.planAnalysisChunks(null), []);
   assert.deepEqual(AI.planAnalysisChunks([{ id: "a", start: 0, text: "" }]), []);
+});
+
+test("除第一块外，每块带上一块结尾作为前情", () => {
+  const chunks = AI.planAnalysisChunks(makeAnalysisSegments(100, 300), {
+    maxChars: 6000,
+    overlapChars: 400,
+  });
+  assert.equal(chunks[0].contextText, "", "第一块前面没有内容可回顾");
+  for (const chunk of chunks.slice(1)) {
+    assert.match(chunk.contextText, /^\[\d+:\d{2}\] /);
+    // 够用就停：只多喂一点上下文，不是把上一块整个再发一遍。
+    assert.ok(
+      chunk.contextText.length >= 400 && chunk.contextText.length < 1200,
+      `前情长度 ${chunk.contextText.length} 不在预期区间`,
+    );
+  }
+});
+
+test("前情取自上一块的末尾，而不是本块自己的开头", () => {
+  const segments = makeAnalysisSegments(100, 300);
+  const chunks = AI.planAnalysisChunks(segments, { maxChars: 6000 });
+  const previous = chunks[0].segments[chunks[0].segments.length - 1];
+  assert.ok(
+    chunks[1].contextText.includes(`[${TRANSCRIPT.formatTimestamp(previous.start)}]`),
+    "前情应当以上一块的最后一段收尾",
+  );
+});
+
+test("关掉重叠就没有前情，老行为原样保留", () => {
+  const chunks = AI.planAnalysisChunks(makeAnalysisSegments(100, 300), {
+    maxChars: 6000,
+    overlapChars: 0,
+  });
+  assert.ok(chunks.every((chunk) => chunk.contextText === ""));
+});
+
+test("分块时丢弃早于本块起点的时间戳，前情不归本块认领", () => {
+  const result = AI.validateAnalysis(
+    {
+      chapters: [
+        { title: "前情里的一章", timestampSeconds: 100 },
+        { title: "本块的一章", timestampSeconds: 400 },
+      ],
+      keyQuotes: [
+        { quote: "前情里的金句", timestampSeconds: 120 },
+        { quote: "本块的金句", timestampSeconds: 500 },
+      ],
+    },
+    900,
+    300,
+  );
+  assert.deepEqual(
+    result.chapters.map((chapter) => chapter.title),
+    ["本块的一章"],
+  );
+  assert.deepEqual(
+    result.keyQuotes.map((quote) => quote.quote),
+    ["本块的金句"],
+  );
 });
 
 // ============================================================
