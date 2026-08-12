@@ -1048,14 +1048,26 @@ function setNotesScope(scope) {
 // 划词解释
 // ============================================================
 
+const EXPLAIN_GAP = 10; // 浮层与选区之间留的缝
+const EXPLAIN_MARGIN = 8; // 浮层与内容区边缘留的缝
+
 let pendingSelection = "";
+let pendingRange = null;
+// 解释浮层锚在被选中的那段文字上。存 Range 而不是坐标：滚动、改窗宽之后
+// 重新取一次 getBoundingClientRect 就能算出新位置。
+let explainAnchor = null;
+
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), Math.max(min, max));
+}
 
 function hideExplain() {
   el("explainTooltip").hidden = true;
   el("explainPopover").hidden = true;
+  explainAnchor = null;
 }
 
-// 选中字幕里的一段文字后，在选区旁边浮出「解释」按钮。
+// 选中字幕里的一段文字后，在选区上方浮出「解释」按钮。
 function onSelectionChange() {
   const selection = window.getSelection();
   if (!selection || selection.isCollapsed || !selection.rangeCount) {
@@ -1070,12 +1082,59 @@ function onSelectionChange() {
     return;
   }
 
+  const range = selection.getRangeAt(0);
   pendingSelection = text;
-  const rect = selection.getRangeAt(0).getBoundingClientRect();
+  pendingRange = range.cloneRange();
+
+  const rect = range.getBoundingClientRect();
+  const bounds = document.querySelector(".content").getBoundingClientRect();
   const tooltip = el("explainTooltip");
   tooltip.hidden = false;
-  tooltip.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 80))}px`;
-  tooltip.style.top = `${Math.max(8, rect.top - 36)}px`;
+  tooltip.style.left = `${clamp(
+    rect.left + rect.width / 2 - tooltip.offsetWidth / 2,
+    EXPLAIN_MARGIN,
+    window.innerWidth - tooltip.offsetWidth - EXPLAIN_MARGIN,
+  )}px`;
+  tooltip.style.top = `${clamp(
+    rect.top - tooltip.offsetHeight - 6,
+    bounds.top + EXPLAIN_MARGIN,
+    bounds.bottom - tooltip.offsetHeight - EXPLAIN_MARGIN,
+  )}px`;
+}
+
+// 浮层贴在选中文字上方；上面塞不下就翻到下方，并始终留在内容区内不压住顶栏。
+function positionExplainPopover() {
+  const popover = el("explainPopover");
+  if (popover.hidden || !explainAnchor) return;
+
+  const rect = explainAnchor.getBoundingClientRect();
+  const bounds = document.querySelector(".content").getBoundingClientRect();
+  // 被解释的那句已经滚出视野，浮层再赖着就成了没有出处的一块牌子。
+  if (rect.bottom < bounds.top || rect.top > bounds.bottom) {
+    hideExplain();
+    return;
+  }
+
+  const { offsetWidth: width, offsetHeight: height } = popover;
+  const minTop = bounds.top + EXPLAIN_MARGIN;
+  const maxTop = bounds.bottom - height - EXPLAIN_MARGIN;
+  const above = rect.top - height - EXPLAIN_GAP;
+  const below = rect.bottom + EXPLAIN_GAP;
+  const placement = above >= minTop || below > maxTop ? "top" : "bottom";
+  const left = clamp(
+    rect.left + rect.width / 2 - width / 2,
+    EXPLAIN_MARGIN,
+    window.innerWidth - width - EXPLAIN_MARGIN,
+  );
+
+  popover.dataset.placement = placement;
+  popover.style.left = `${left}px`;
+  popover.style.top = `${clamp(placement === "top" ? above : below, minTop, maxTop)}px`;
+  // 浮层被边缘挡住而偏移时，小三角仍要对准选区中心。
+  popover.style.setProperty(
+    "--arrow-x",
+    `${clamp(rect.left + rect.width / 2 - left, 16, width - 16)}px`,
+  );
 }
 
 // 给模型的上下文：选中处所在段落及前后各一段。用户选中的是屏幕上显示的文字，
@@ -1103,6 +1162,8 @@ async function explainSelection() {
   el("explainTerm").textContent = selected;
   el("explainBody").textContent = "正在解释…";
   el("explainPopover").hidden = false;
+  explainAnchor = pendingRange;
+  positionExplainPopover();
 
   const result = await chrome.runtime.sendMessage({
     action: "explainSelection",
@@ -1114,6 +1175,8 @@ async function explainSelection() {
   el("explainBody").textContent = result?.success
     ? result.explanation
     : result?.message || "解释失败，请重试。";
+  // 解释文字填进去，浮层高度变了，得重新贴一次。
+  positionExplainPopover();
 }
 
 // ============================================================
@@ -1230,9 +1293,12 @@ function setupEventListeners() {
 
   document.addEventListener("selectionchange", onSelectionChange);
 
+  window.addEventListener("resize", positionExplainPopover);
+
   document.querySelector(".content").addEventListener(
     "scroll",
     () => {
+      positionExplainPopover();
       // 刚刚是我们自己滚的就不算用户操作。
       if (Date.now() - state.lastAutoScrollAt > 1000) {
         state.lastUserScrollAt = Date.now();
