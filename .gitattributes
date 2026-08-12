@@ -1,0 +1,7 @@
+# Windows 侧 git 的 core.autocrlf=true 会在检出时把文本写成 CRLF，
+# 而打包脚本直接复制工作区文件——prompts/*.md 的代码块解析按 \n 断行，
+# 一旦混进 \r，「概览」在打出来的包里会整个失效。统一钉成 LF。
+* text=auto eol=lf
+
+*.png binary
+*.zip binary
