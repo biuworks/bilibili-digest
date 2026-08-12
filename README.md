@@ -1,4 +1,4 @@
-# Bilibili Digest
+# Digest for Bilibili
 
 把 B 站视频变成学习资源的 Chrome 扩展：在播放页旁边开一个侧边栏，
 提供字幕阅读、双语对照、AI 概览、划词解释和带时间戳的笔记。
