@@ -56,10 +56,17 @@ B 站的 AI 字幕有两个特点，会直接影响你的工作：
 - timestamp: "2:30"
 - timestampSeconds: 150
 
+⚠️ 关于「前情回顾」⚠️
+长视频会切成多段分别处理。用户消息里如果出现「前情回顾」，那是上一段结尾的字幕，
+给你的唯一用途是理解本段开头在承接什么话题、把跨越切点的内容看完整。
+不要为前情回顾里的内容单独开章节，也不要从里面挑金句——它已经由上一段负责。
+如果本段开头正是前情里那个话题的延续，就把这一章的标题写成能概括整个话题的样子，
+时间戳仍取本段范围内的那一行。
+
 绝对不要：
 - 编造字幕里根本不存在的时间戳
 - 拿 0:00 当默认值——去字幕里找真实的那一行
-- 使用超过用户消息中给出的结束时刻的时间戳
+- 使用早于起始时刻、或晚于结束时刻的时间戳（前情回顾里的时间戳一律不能用）
 
 章节：找到话题开始的那一行，用那行的时间戳
 金句：找到包含该句的那一行，用那行的时间戳
@@ -88,22 +95,25 @@ B 站的 AI 字幕有两个特点，会直接影响你的工作：
 视频标题：{videoTitle}
 UP 主：{ownerName}
 {rangeNote}
-本次字幕覆盖到 {durationFormatted}（第 {maxTimestampSeconds} 秒）——不要使用超过这个范围的时间戳！
+本次字幕从 {startFormatted}（第 {minTimestampSeconds} 秒）到 {durationFormatted}（第 {maxTimestampSeconds} 秒）——时间戳必须落在这个区间内！
 后段门槛：最后一个章节的时间戳必须晚于 {lateThreshold}。
 
 视频简介（用它来校正人名、品牌名与术语的写法）：
 {videoDescription}
-
+{contextNote}
 字幕：
 {transcriptText}
 ```
 
 ## 变量
 
+- `{startFormatted}` — 本次字幕的起始时刻，`MM:SS`
+- `{minTimestampSeconds}` — 本次字幕的起始秒数
 - `{durationFormatted}` — 本次字幕的结束时刻，`MM:SS`
 - `{lateThreshold}` — 本次区间 75% 处的时间点，用来强制覆盖后半段
 - `{maxTimestampSeconds}` — 本次字幕的结束秒数
 - `{rangeNote}` — 长视频会切块分别生成，这里说明当前是哪一块；不分块时为空
+- `{contextNote}` — 上一块结尾的字幕，供模型看懂跨切点的话题；第一块与不分块时为空
 - `{videoTitle}` — 视频标题
 - `{ownerName}` — UP 主名称
 - `{videoDescription}` — 视频简介

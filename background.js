@@ -701,10 +701,18 @@ async function analyzeChunk(chunk, chunkCount, common) {
         `只为这一段产出章节与金句，不要涉及其它时间段。`
       : "";
 
+  // 前情只喂给模型当上下文，产出仍限定在本块区间内，靠 minTimestampSeconds 兜底。
+  const contextNote = chunk.contextText
+    ? `\n前情回顾（上一段的结尾，只用来理解本段承接什么，不要为它开章节或挑金句）：\n${chunk.contextText}\n`
+    : "";
+
   const variables = {
     ...common,
     ...timing,
     rangeNote,
+    contextNote,
+    startFormatted: BILI_TRANSCRIPT.formatTimestamp(chunk.startSeconds),
+    minTimestampSeconds: chunk.startSeconds,
     transcriptText: chunk.text,
   };
   const [systemPrompt, userPrompt] = await Promise.all([
@@ -714,6 +722,7 @@ async function analyzeChunk(chunk, chunkCount, common) {
 
   const { text } = await requestAiCompletion({
     // 概览是摘要，产出远小于原文；分块之后每块更小。
+    // 按正文长度估算即可，前情只进输入不进输出。
     maxTokens: BILI_AI.estimateOutputTokens(chunk.text.length, {
       ratio: 0.5,
       floor: 2048,
@@ -728,6 +737,7 @@ async function analyzeChunk(chunk, chunkCount, common) {
   return BILI_AI.validateAnalysis(
     BILI_AI.parseLooseJson(text),
     timing.maxTimestampSeconds,
+    chunk.startSeconds,
   );
 }
 

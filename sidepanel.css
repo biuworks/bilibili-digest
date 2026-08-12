@@ -648,17 +648,42 @@ kbd {
   cursor: pointer;
 }
 
+/* 位置由 JS 贴到选中文字旁边，这里只定宽和外观 */
 .explain-popover {
-  position: absolute;
-  right: 12px;
-  bottom: 12px;
-  left: 12px;
+  position: fixed;
+  top: 0;
+  left: 0;
   z-index: 21;
+  width: min(340px, calc(100vw - 16px));
   padding: 12px 14px;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 10px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+
+/* 指向选中文字的小三角，横向位置由 JS 通过 --arrow-x 给出 */
+.explain-popover::after {
+  content: "";
+  position: absolute;
+  left: var(--arrow-x, 50%);
+  width: 10px;
+  height: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.explain-popover[data-placement="top"]::after {
+  bottom: -6px;
+  border-top-color: transparent;
+  border-left-color: transparent;
+}
+
+.explain-popover[data-placement="bottom"]::after {
+  top: -6px;
+  border-right-color: transparent;
+  border-bottom-color: transparent;
 }
 
 .explain-popover-head {
@@ -680,6 +705,8 @@ kbd {
 
 .explain-body {
   margin: 0;
+  max-height: 40vh;
+  overflow-y: auto;
   font-size: 13px;
   line-height: 1.7;
   overflow-wrap: anywhere;
