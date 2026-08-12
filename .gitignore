@@ -1,4 +1,5 @@
 node_modules/
+dist/
 *.zip
 *.crx
 .DS_Store

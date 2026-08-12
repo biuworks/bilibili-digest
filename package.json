@@ -5,6 +5,7 @@
   "description": "Turn Bilibili videos into learning resources: transcripts, punctuation repair, bilingual subtitles, AI overviews, and timestamped notes. Bilibili port of youtube-digest.",
   "license": "MIT",
   "scripts": {
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "package": "bash scripts/package.sh"
   }
 }
