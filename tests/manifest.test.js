@@ -14,8 +14,39 @@ const manifest = readJson("manifest.json");
 test("是一份 MV3 清单", () => {
   assert.equal(manifest.manifest_version, 3);
   assert.ok(manifest.version);
-  // 侧边栏 API 需要 Chrome 116+
+  // 侧边栏 API 需要 Chrome 116+。Edge 的版本号跟 Chromium 对齐，同一个门槛
+  // 对它一样成立（Edge 自 114 起支持侧边栏）。
   assert.ok(Number(manifest.minimum_chrome_version) >= 116);
+});
+
+/**
+ * 侧边栏的 per-tab enabled 在两个浏览器上语义不同：Chrome 每个标签页各管各的，
+ * Edge 是窗口级的——某个标签页被 disable，切过去就会把整个窗口的侧边栏关掉，
+ * 正在跑的 AI 任务跟着断。所以路径只由清单提供，代码里不按标签页开关。
+ */
+test("侧边栏全局可用，图标点击交给浏览器处理", () => {
+  assert.ok(manifest.side_panel?.default_path, "侧边栏路径应当由清单提供");
+  assert.ok(manifest.permissions.includes("sidePanel"));
+
+  const source = readText("background.js");
+  assert.doesNotMatch(
+    source,
+    /sidePanel[\s\S]{0,40}setOptions\(/,
+    "按标签页 setOptions 会让 Edge 在切标签页时关掉侧边栏",
+  );
+  assert.match(
+    source,
+    /openPanelOnActionClick:\s*true/,
+    "自己接管图标点击要靠用户手势，Edge 的判定比 Chrome 严，交给浏览器两边都稳",
+  );
+});
+
+test("同一份清单能投 Chrome 应用商店和 Edge 加载项", () => {
+  // 这两条都是 Edge 认证会直接打回的硬性要求。
+  assert.equal(manifest.update_url, undefined, "商店版清单不能带 update_url");
+  for (const field of [manifest.name, manifest.description]) {
+    assert.doesNotMatch(field, /chrome/i, "名称和描述里不能出现 Chrome");
+  }
 });
 
 test("描述不超过 132 字符，且不宣传尚未实现的功能", () => {
@@ -41,7 +72,7 @@ test("描述不超过 132 字符，且不宣传尚未实现的功能", () => {
 });
 
 /**
- * 清单里但凡引用了不存在的文件，Chrome 就整个拒绝加载扩展，
+ * 清单里但凡引用了不存在的文件，浏览器就整个拒绝加载扩展，
  * 而且报错信息经常只指向清单本身。这条测试把问题提前暴露在命令行里。
  */
 test("清单引用的每个文件都真实存在", () => {

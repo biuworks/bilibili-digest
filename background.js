@@ -44,56 +44,50 @@ async function getSettings() {
 // 侧边栏
 // ============================================================
 
-const VIDEO_PAGE_PATTERN =
-  /^https:\/\/www\.bilibili\.com\/(video\/BV[0-9A-Za-z]{10}|list\/.*BV[0-9A-Za-z]{10})/;
+/**
+ * 侧边栏对所有页面可用，路径由清单的 side_panel.default_path 给出，这里
+ * 不按标签页 setOptions。原因是 per-tab 的 enabled 在两个浏览器上语义不同：
+ * Chrome 每个标签页各管各的，Edge 则是窗口级——切到一个 disabled 的标签页会
+ * 把整个窗口的侧边栏关掉，切回来也不会自动恢复，正在跑的 AI 任务跟着断
+ * （microsoft/MicrosoftEdge-Extensions#142）。改成全局可用之后两边行为一致，
+ * 顺带躲开了 setOptions 重载面板打断任务的老毛病；非播放页由侧边栏自己显示引导。
+ */
 
-// setOptions 会让已打开的侧边栏重新加载、打断正在跑的 AI 任务，
-// 所以记住每个 tab 的状态，只在真的变了才调。
-const panelEnabledByTab = new Map();
-
-function updatePanelForTab(tabId, url) {
-  const isVideoPage = VIDEO_PAGE_PATTERN.test(url || "");
-  if (panelEnabledByTab.get(tabId) === isVideoPage) return;
-  panelEnabledByTab.set(tabId, isVideoPage);
-  // 标签页刚关闭时 setOptions 会 reject，忽略即可。
-  chrome.sidePanel
-    .setOptions({ tabId, path: "sidepanel.html", enabled: isVideoPage })
-    .catch(() => {});
-}
-
-chrome.tabs.onRemoved.addListener((tabId) => panelEnabledByTab.delete(tabId));
-
-// 不用 openPanelOnActionClick：侧边栏在非播放页是 disabled 的，那样点图标会
-// 毫无反应。自己处理点击，就能先 enable 再 open。
-chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+// 让浏览器自己响应工具栏图标的点击。自己调 open() 要求调用发生在用户手势里，
+// 而手势的判定 Edge 比 Chrome 严，交给浏览器是两边都稳的唯一做法。
+chrome.sidePanel
+  .setPanelBehavior({ openPanelOnActionClick: true })
+  .catch((error) =>
+    console.warn("[Bilibili Digest] 无法设置侧边栏点击行为：", error),
+  );
 
 chrome.runtime.onInstalled.addListener(({ reason }) => {
   if (reason === "install") chrome.runtime.openOptionsPage();
 });
 
-chrome.action.onClicked.addListener((tab) => {
-  // 不要 await：await 会让用户手势失效，导致 sidePanel.open 被拒绝。
-  chrome.sidePanel.setOptions({
-    tabId: tab.id,
-    path: "sidepanel.html",
-    enabled: true,
-  });
-  chrome.sidePanel.open({ tabId: tab.id });
-});
+/**
+ * 播放页上那个注入的 Digest 按钮走这条路。手势能否从内容脚本的消息传递到这里，
+ * Chrome 认，Edge 不一定认。被拒绝时如实回话，让页面上的按钮改口引导用户去点
+ * 工具栏图标——那条路由浏览器自己处理，一定有效。
+ */
+async function handleOpenSidePanel(tab) {
+  if (!tab) return { success: false };
 
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (!changeInfo.url) return; // 忽略只有标题/图标变化的更新
-  updatePanelForTab(tabId, changeInfo.url);
-});
-
-chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   try {
-    const tab = await chrome.tabs.get(tabId);
-    updatePanelForTab(tabId, tab.url);
+    // 传 windowId 而不是 tabId：侧边栏是窗口级的，没有按标签页区分的路径。
+    await chrome.sidePanel.open({ windowId: tab.windowId });
   } catch (error) {
-    // 标签页在读取前就消失了，无事可做。
+    console.warn("[Bilibili Digest] 打开侧边栏被拒绝：", error);
+    return { success: false, needsToolbarClick: true };
   }
-});
+
+  // 侧边栏可能本来就开着而且停在别的视频上，广播一次让它跟过来。
+  // 刚打开的那种情形不必担心广播丢失，面板自己启动时就会同步当前标签页。
+  chrome.runtime
+    .sendMessage({ action: "startDigestFromButton" })
+    .catch(() => {});
+  return { success: true };
+}
 
 // ============================================================
 // 消息路由
@@ -127,29 +121,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.action === "openSidePanel") {
-    const tabId = sender.tab?.id;
-    if (tabId) {
-      chrome.sidePanel.setOptions({
-        tabId,
-        path: "sidepanel.html",
-        enabled: true,
-      });
-      chrome.sidePanel
-        .open({ tabId })
-        .then(() => {
-          // 侧边栏可能已经开着，广播一次让它刷新当前视频。
-          setTimeout(() => {
-            chrome.runtime
-              .sendMessage({ action: "startDigestFromButton" })
-              .catch(() => {});
-          }, 300);
-        })
-        .catch((error) =>
-          console.error("[Bilibili Digest] 打开侧边栏失败：", error),
-        );
-    }
-    sendResponse({ success: true });
-    return false;
+    handleOpenSidePanel(sender.tab)
+      .then(sendResponse)
+      .catch(() => sendResponse({ success: false, needsToolbarClick: true }));
+    return true;
   }
 
   if (message?.action === "analyzeTranscript") {

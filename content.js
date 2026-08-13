@@ -179,8 +179,25 @@
     return overlay;
   }
 
-  function openSidePanel() {
-    chrome.runtime.sendMessage({ action: "openSidePanel" }).catch(() => {});
+  function flashDigestButton(text) {
+    const button = document.getElementById(DIGEST_BUTTON_ID);
+    if (!button) return;
+    button.textContent = text;
+    setTimeout(() => {
+      if (button.isConnected) button.textContent = "Digest";
+    }, 2600);
+  }
+
+  // 浏览器可能拒绝从这里程序化打开侧边栏（Edge 对用户手势的判定比 Chrome 严）。
+  // 那时唯一走得通的是工具栏图标，它由浏览器自己处理，所以把人指过去。
+  async function openSidePanel() {
+    let result = null;
+    try {
+      result = await chrome.runtime.sendMessage({ action: "openSidePanel" });
+    } catch (error) {
+      // service worker 正在重启之类，下面统一按打不开处理。
+    }
+    if (!result?.success) flashDigestButton("请点工具栏图标 →");
   }
 
   function injectDigestButton() {

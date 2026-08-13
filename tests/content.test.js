@@ -50,7 +50,10 @@ function createDom() {
         this.isConnected = false;
         if (this.id) byId.delete(this.id);
       },
-      addEventListener() {},
+      listeners: {},
+      addEventListener(type, handler) {
+        (this.listeners[type] ||= []).push(handler);
+      },
       // 支持 #id 和 .class 两种形态：前者找 overlay，后者找笔记按钮的文案 span。
       querySelector(selector) {
         const text = String(selector);
@@ -98,7 +101,24 @@ function createDom() {
 /** 让脚本里的 await 链跑完。延时都被压成 0，几个宏任务足够。 */
 const flush = () => new Promise((resolve) => setTimeout(resolve, 20));
 
-function start({ dom, href = "https://www.bilibili.com/video/BV1xx411c7mD" }) {
+function click(element) {
+  const event = { preventDefault() {}, stopPropagation() {} };
+  for (const handler of element.listeners.click || []) handler(event);
+}
+
+/**
+ * 只推进微任务。按钮的临时文案是靠 setTimeout 还原的，而桩把延时压成了 0——
+ * 一旦让出宏任务，文案就已经变回去了，什么都测不到。
+ */
+async function settle() {
+  for (let i = 0; i < 5; i += 1) await Promise.resolve();
+}
+
+function start({
+  dom,
+  href = "https://www.bilibili.com/video/BV1xx411c7mD",
+  sendMessage = () => Promise.resolve({ success: true }),
+}) {
   const intervals = [];
   const context = {
     console,
@@ -115,7 +135,7 @@ function start({ dom, href = "https://www.bilibili.com/video/BV1xx411c7mD" }) {
     document: dom.document,
     chrome: {
       runtime: {
-        sendMessage: () => Promise.resolve({ success: true }),
+        sendMessage,
         onMessage: { addListener() {} },
       },
     },
@@ -254,6 +274,44 @@ test("按钮被重渲染删掉后，定时自查会补回来", async () => {
     toolbar.children.some((child) => child.id === DIGEST_ID),
     "重渲染之后按钮没补回来，用户就再也点不开侧边栏了",
   );
+});
+
+/**
+ * 页面里的按钮靠给 service worker 发消息来开侧边栏，而浏览器要求 open() 发生在
+ * 用户手势里。手势能否随消息传过来，Chrome 认，Edge 不一定认。被拒绝时按钮必须
+ * 说点什么——一个点了毫无反应的按钮，用户只会当扩展坏了。
+ */
+test("侧边栏打不开时，Digest 按钮把人指向工具栏图标", async () => {
+  const dom = createDom();
+  const toolbar = dom.register(".video-toolbar-left");
+  dom.register("#bilibili-player");
+
+  await run({
+    dom,
+    sendMessage: () =>
+      Promise.resolve({ success: false, needsToolbarClick: true }),
+  });
+
+  const button = toolbar.children.find((child) => child.id === DIGEST_ID);
+  click(button);
+  await settle();
+
+  assert.match(button.textContent, /工具栏/, "拒绝之后得告诉用户改从哪里打开");
+});
+
+test("侧边栏正常打开时按钮不多话", async () => {
+  const dom = createDom();
+  const toolbar = dom.register(".video-toolbar-left");
+  dom.register("#bilibili-player");
+
+  await run({ dom });
+
+  const button = toolbar.children.find((child) => child.id === DIGEST_ID);
+  click(button);
+  await settle();
+
+  // 每次点都跳一句提示，等于狼来了，真出问题时没人看。
+  assert.equal(button.textContent, "Digest");
 });
 
 test("不是播放页时什么都不注入", async () => {
