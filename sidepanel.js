@@ -1312,7 +1312,7 @@ function setupEventListeners() {
     if (windowId === state.windowId) syncWithActiveTab();
   });
 
-  // B 站换视频走 pushState，Chrome 会以 changeInfo.url 的形式上报。
+  // B 站换视频走 pushState，浏览器会以 changeInfo.url 的形式上报。
   // 不比对 tabId：syncWithActiveTab 自己会解析当前活动标签页，没变就直接返回。
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     if (changeInfo.url) syncWithActiveTab();

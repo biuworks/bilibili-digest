@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# 打出可直接上传 Chrome 应用商店的 zip。
+# 打出可直接上传 Chrome 应用商店与 Edge 加载项的 zip。同一个包投两边即可，
+# 两个商店对包结构的要求一致（manifest.json 在顶层、不带 update_url）。
 #
 # 用白名单而不是「排除若干目录」：漏排一个新目录只是包大了，
 # 漏排一份密钥或调试文件却是事故，白名单让新增文件默认不进包。
@@ -44,7 +45,7 @@ for dir in "${DIRS[@]}"; do
   cp -r "$dir" "$stage/$dir"
 done
 
-# manifest 引用了却没进包的文件，会让 Chrome 直接拒绝加载整个扩展，
+# manifest 引用了却没进包的文件，会让浏览器直接拒绝加载整个扩展，
 # 而商店的报错通常只指向清单本身，很难定位。
 missing=$(cd "$stage" && node -e '
 const fs = require("fs");

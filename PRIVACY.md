@@ -2,6 +2,7 @@
 
 **Digest for Bilibili**（以下称「本扩展」）
 生效日期：2026 年 8 月 13 日
+适用范围：Chrome 与 Edge 上分发的版本，两者是同一份代码，行为完全一致。
 
 本扩展没有服务器。开发者不接收、不存储、也无法访问你的任何数据。
 下面把三类数据分别讲清楚：存在哪、什么时候离开浏览器、怎么删。
@@ -15,7 +16,7 @@
 ## 存在你本机的数据
 
 全部写入 `chrome.storage.local`，只保存在你这台设备上，不使用会同步到
-Google 账号的 `chrome.storage.sync`。卸载扩展时由浏览器一并清除。
+浏览器账号的 `chrome.storage.sync`。卸载扩展时由浏览器一并清除。
 
 | 内容 | 存储键 | 保留期 |
 | --- | --- | --- |
@@ -44,7 +45,7 @@ Google 账号的 `chrome.storage.sync`。卸载扩展时由浏览器一并清除
 
 本扩展在安装时只申请 B 站相关域名的权限。AI 服务的域名在安装时无法预知，
 因此通过可选权限在你点击「保存并授权」时按域名单独申请，你可以随时在
-Chrome 的扩展详情页收回。
+浏览器的扩展详情页收回。
 
 这些第三方服务如何处理收到的数据，适用它们各自的隐私政策，不在本扩展控制范围内。
 请在选择服务商前阅读对方的条款。
@@ -53,7 +54,8 @@ Chrome 的扩展详情页收回。
 
 - 删除单个视频的缓存或单条笔记：在侧边栏内直接操作
 - 清空密钥：在设置页把 API 密钥字段留空并保存
-- 收回 AI 服务的域名授权：Chrome → 扩展程序 → 本扩展 → 详情 → 网站访问权限
+- 收回 AI 服务的域名授权：扩展管理页（Chrome 是 `chrome://extensions`，
+  Edge 是 `edge://extensions`）→ 本扩展 → 详情 → 网站访问权限
 - 清除全部数据：卸载扩展
 
 ## 政策变更
@@ -71,6 +73,7 @@ Chrome 的扩展详情页收回。
 ## English Summary
 
 **Digest for Bilibili** has no backend. The developer receives no data whatsoever.
+This policy covers both the Chrome and the Edge build — they are the same code.
 
 - **No collection**: no personal identifiers, no analytics, no tracking, no ads, no
   browsing history, no sale or transfer of data to anyone. No remotely hosted code.
@@ -86,6 +89,6 @@ Chrome 的扩展详情页收回。
   instance, in which case nothing leaves your machine.
 - **Host permissions**: only Bilibili domains are requested at install time. The AI
   endpoint's domain is unknown at install time and is requested at runtime, per origin,
-  via optional permissions, and can be revoked at any time from Chrome's extension page.
+  via optional permissions, and can be revoked at any time from the browser's extensions page.
 
 Third-party AI providers handle received data under their own privacy policies.
