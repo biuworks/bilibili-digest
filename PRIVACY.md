@@ -40,8 +40,8 @@
 **二、你自己配置的 AI 服务**（地址由你在设置页填写）
 使用顺句、翻译、概览、划词解释或笔记整理时，相应的字幕文本、你选中的文字
 和视频标题会随请求发往该服务，并在请求头中携带你的 API 密钥。
-这个地址完全由你决定，可以是 OpenAI、Anthropic、DeepSeek 等厂商，
-也可以是你本机运行的 Ollama——填本机地址时数据不出设备。
+这个地址完全由你决定，可以是任一商业模型服务，也可以是你本机运行的
+推理服务——填本机地址时数据不出设备。可选的服务在设置页的下拉里列出。
 
 本扩展在安装时只申请 B 站相关域名的权限。AI 服务的域名在安装时无法预知，
 因此通过可选权限在你点击「保存并授权」时按域名单独申请，你可以随时在
@@ -85,8 +85,8 @@ This policy covers both the Chrome and the Edge build — they are the same code
   because subtitles require sign-in; the extension holds no `cookies` permission and
   never reads or transmits cookie contents; (2) requests to the AI endpoint **you**
   configure, carrying transcript text, selected text, video title, and your API key in
-  the request header. That endpoint may be a commercial provider or a local Ollama
-  instance, in which case nothing leaves your machine.
+  the request header. That endpoint may be a commercial provider or a model server
+  running on your own machine, in which case nothing leaves your machine.
 - **Host permissions**: only Bilibili domains are requested at install time. The AI
   endpoint's domain is unknown at install time and is requested at runtime, per origin,
   via optional permissions, and can be revoked at any time from the browser's extensions page.
