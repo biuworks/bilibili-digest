@@ -43,6 +43,14 @@ AI 会把当时那句字幕整理成通顺的一句话，笔记卡片支持回�
 
 ## 安装
 
+**已上架 Chrome 商店（v0.1.0，2026-08-15 通过审核）：**
+
+[![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-Digest%20for%20Bilibili-4285F4)](https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc)
+
+Chrome 商店安装：<https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc>
+
+> 商店搜索索引有延迟，刚上架时可能搜不到，直接点上方链接即可安装。
+
 Chrome 和 Edge 用的是同一份代码、同一个安装包，功能没有差别。
 两者都需要 116 及以上的版本——这是侧边栏 API 的门槛。
 
@@ -52,6 +60,8 @@ Chrome 和 Edge 用的是同一份代码、同一个安装包，功能没有差�
 
 装好后会自动打开设置页。字幕阅读开箱即用，顺句、翻译、概览、划词解释
 和笔记整理要先在那里填一个 AI 服务的地址和密钥。
+
+商店审核材料（提交底稿）见 [CHROMEWEBSTORE.md](CHROMEWEBSTORE.md)。
 
 ## 许可与致谢
 
