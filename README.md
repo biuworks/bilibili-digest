@@ -43,13 +43,11 @@ AI 会把当时那句字幕整理成通顺的一句话，笔记卡片支持回�
 
 ## 安装
 
-**已上架 Chrome 商店（v0.1.0，2026-08-15 通过审核）：**
+**已上架 Chrome 商店**（v0.1.0，2026-08-15 通过审核）：
 
-[![Chrome Web Store](https://img.shields.io/badge/Chrome%20Web%20Store-Digest%20for%20Bilibili-4285F4)](https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc)
+[![Chrome Web Store](https://img.shields.io/badge/Chrome_Web_Store-Digest_for_Bilibili-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc)
 
-Chrome 商店安装：<https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc>
-
-> 商店搜索索引有延迟，刚上架时可能搜不到，直接点上方链接即可安装。
+> 商店搜索索引有延迟，刚上架时可能搜不到，直接点上面的徽章即可安装。
 
 Chrome 和 Edge 用的是同一份代码、同一个安装包，功能没有差别。
 两者都需要 116 及以上的版本——这是侧边栏 API 的门槛。
