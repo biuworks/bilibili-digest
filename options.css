@@ -1,22 +1,53 @@
-/* Bilibili Digest — 设置页样式 */
+/* Bilibili Digest — 设置页样式。
+ * 与侧边栏共享同一套设计语言：暖纸面背景、白色卡片、药丸按钮、
+ * 同款焦点环与过渡节奏。
+ */
 
 :root {
   --accent: #fb7299;
-  --bg: #f6f7f9;
-  --card: #ffffff;
-  --text: #18191c;
-  --text-muted: #61666d;
-  --border: #e3e5e7;
+  --accent-strong: #f0567e;
+  --accent-soft: rgba(251, 114, 153, 0.10);
+
+  --bg: #faf6f7;
+  /* 卡片与侧边栏同色族：与纸面统一的暖白，不再用刺眼的纯白 */
+  --card: #fdf8fa;
+  /* 输入框要再白一点，在暖白卡片上才有「可以填」的落差 */
+  --input: #ffffff;
+  --bg-hover: #f5eff1;
+  --text: #2b2629;
+  --text-muted: #6e6569;
+  --text-faint: #a29a9e;
+  --border: #ece4e7;
+  --border-strong: #dcd2d6;
+  --danger: #e0485a;
   --ok: #2e9e5b;
+
+  --shadow-sm: 0 1px 3px rgba(88, 60, 72, 0.06);
+  --shadow-md: 0 8px 24px rgba(88, 60, 72, 0.10);
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+
+  --focus-ring: 2px solid var(--accent);
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+  --dur: 160ms;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #17181a;
     --card: #1f2022;
+    --input: var(--bg);
+    --bg-hover: #27282b;
     --text: #e3e5e7;
     --text-muted: #9499a0;
+    --text-faint: #6b7076;
     --border: #2f3134;
+    --border-strong: #3c3f43;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+    --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
   }
 }
 
@@ -26,34 +57,85 @@
 
 body {
   margin: 0;
-  padding: 32px 16px;
+  padding: 40px 16px;
   font-family: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   font-size: 14px;
+  line-height: 1.5;
   color: var(--text);
   background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+:where(button, input, select, a):focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+button,
+input,
+select {
+  font-family: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 .page {
-  max-width: 620px;
+  max-width: 640px;
   margin: 0 auto;
 }
 
+/* 页面标题带同款品牌方块，与侧边栏头部呼应。 */
 h1 {
-  margin: 0 0 20px;
-  font-size: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 24px;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+h1::before {
+  content: "";
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #fb7299 0%, #f0567e 100%);
+  box-shadow: 0 2px 8px rgba(251, 114, 153, 0.35);
 }
 
 .card {
-  padding: 18px 20px;
+  padding: 20px 22px;
   margin-bottom: 16px;
   background: var(--card);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
 }
 
 h2 {
+  display: flex;
+  align-items: center;
+  gap: 7px;
   margin: 0 0 8px;
   font-size: 15px;
+  font-weight: 600;
+}
+
+h2::before {
+  content: "";
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--accent);
 }
 
 .hint {
@@ -65,34 +147,45 @@ h2 {
 
 .field {
   display: block;
-  margin: 16px 0 0;
+  margin: 18px 0 0;
 }
 
 .field-label {
   display: block;
   margin-bottom: 6px;
   font-size: 12px;
-  color: var(--text-muted);
+  font-weight: 600;
+  color: var(--text);
 }
 
 input[type="password"],
 input[type="text"],
 input[type="url"],
+input[type="number"],
 select {
   width: 100%;
-  padding: 8px 10px;
-  font-family: inherit;
+  padding: 8px 12px;
   font-size: 13px;
   color: var(--text);
-  background: var(--bg);
+  background: var(--input);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color var(--dur) var(--ease);
+}
+
+input:hover,
+select:hover {
+  border-color: var(--border-strong);
 }
 
 input:focus,
 select:focus {
-  outline: none;
   border-color: var(--accent);
+}
+
+input::placeholder {
+  color: var(--text-faint);
 }
 
 .field-hint {
@@ -105,6 +198,11 @@ select:focus {
 
 .field-hint a {
   color: var(--accent);
+  text-decoration: none;
+}
+
+.field-hint a:hover {
+  text-decoration: underline;
 }
 
 .field-row {
@@ -120,14 +218,14 @@ select:focus {
 code {
   padding: 1px 5px;
   font-size: 12px;
-  background: var(--bg);
+  background: var(--input);
   border: 1px solid var(--border);
   border-radius: 4px;
 }
 
 .note {
-  margin-top: 16px;
-  padding-top: 14px;
+  margin-top: 20px;
+  padding-top: 16px;
   border-top: 1px solid var(--border);
 }
 
@@ -135,38 +233,67 @@ code {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-top: 16px;
+  margin-top: 20px;
 }
 
 .primary-btn {
-  padding: 7px 18px;
+  padding: 8px 20px;
   font-size: 13px;
+  font-weight: 600;
   color: #fff;
   background: var(--accent);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
+  box-shadow: 0 4px 12px rgba(251, 114, 153, 0.3);
+  transition:
+    background-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease),
+    transform var(--dur) var(--ease);
+}
+
+.primary-btn:hover {
+  background: var(--accent-strong);
+  box-shadow: 0 6px 16px rgba(251, 114, 153, 0.38);
+}
+
+.primary-btn:active {
+  transform: translateY(1px);
+  box-shadow: 0 2px 8px rgba(251, 114, 153, 0.3);
 }
 
 .ghost-btn {
-  padding: 7px 14px;
-  font-family: inherit;
+  padding: 8px 16px;
   font-size: 13px;
+  font-weight: 500;
   white-space: nowrap;
   color: var(--text-muted);
   background: transparent;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-pill);
   cursor: pointer;
+  transition:
+    color var(--dur) var(--ease),
+    border-color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
 }
 
 .ghost-btn:hover {
   color: var(--accent);
   border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ghost-btn:active {
+  background: var(--bg-hover);
 }
 
 .status {
   font-size: 13px;
   line-height: 1.6;
   color: var(--ok);
+}
+
+.status:empty {
+  display: none;
 }

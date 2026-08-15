@@ -39,8 +39,8 @@
   </svg>
 
   <header class="app-header">
+    <!-- 扩展名由 Chrome 侧边栏的原生标题条负责展示，这里不再重复一遍 -->
     <div class="app-header-row">
-      <h1 class="app-title">Digest for Bilibili</h1>
       <div class="app-actions">
         <button id="refreshBtn" class="icon-btn" title="重新获取字幕（跳过缓存）" aria-label="重新获取字幕">
           <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -69,9 +69,9 @@
     </div>
 
     <nav class="tabs" role="tablist">
-      <button class="tab active" data-tab="transcript" role="tab">字幕</button>
-      <button class="tab" data-tab="overview" role="tab">概览</button>
-      <button class="tab" data-tab="notes" role="tab">笔记</button>
+      <button class="tab active" data-tab="transcript" role="tab" aria-selected="true">字幕</button>
+      <button class="tab" data-tab="overview" role="tab" aria-selected="false">概览</button>
+      <button class="tab" data-tab="notes" role="tab" aria-selected="false">笔记</button>
     </nav>
   </header>
 
@@ -81,11 +81,21 @@
       <div class="spinner" aria-hidden="true"></div>
       <p id="loadingTitle" class="state-title">正在获取字幕…</p>
       <p id="loadingSubtitle" class="state-text"></p>
+      <!-- 骨架屏给字幕区的形状预告：眼睛先知道「内容要来了」，等待就不那么焦躁 -->
+      <div class="skeleton-list" aria-hidden="true">
+        <div class="skeleton-row"><span class="sk sk-time"></span><span class="sk sk-line w75"></span></div>
+        <div class="skeleton-row"><span class="sk sk-time"></span><span class="sk sk-line"></span></div>
+        <div class="skeleton-row"><span class="sk sk-time"></span><span class="sk sk-line w50"></span></div>
+        <div class="skeleton-row"><span class="sk sk-time"></span><span class="sk sk-line"></span></div>
+        <div class="skeleton-row"><span class="sk sk-time"></span><span class="sk sk-line w75"></span></div>
+      </div>
     </section>
 
     <section id="idleState" class="state" hidden>
-      <p class="state-title">打开一个 B 站视频</p>
-      <p class="state-text">在 bilibili.com 的播放页打开本面板，就能阅读该视频的字幕。</p>
+      <div class="brand-tile" aria-hidden="true"></div>
+      <!-- 标题与文案由 sidepanel.js 里的常量统一设置，保证「没有视频」在任何标签页都是同一句话 -->
+      <p id="idleTitle" class="state-title">打开一个 B 站视频</p>
+      <p id="idleText" class="state-text">在 bilibili.com 的播放页打开本面板，就能阅读该视频的字幕。</p>
     </section>
 
     <section id="errorState" class="state" hidden>
@@ -135,15 +145,6 @@
         <span class="muted" id="rewriteProgressText"></span>
       </div>
       <div id="transcriptList" class="transcript-list"></div>
-      <!-- 手动滚开或在搜索时，给一条随时回到播放位置的路 -->
-      <button id="followPill" class="follow-pill" hidden>
-        <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <circle cx="8" cy="8" r="4.25"/>
-          <circle cx="8" cy="8" r="0.5" fill="currentColor" stroke="none"/>
-          <path d="M8 1.25v2M8 12.75v2M1.25 8h2M12.75 8h2"/>
-        </svg>
-        <span>回到当前句</span>
-      </button>
     </section>
 
     <!-- 概览 -->
@@ -185,7 +186,8 @@
         </div>
         <h2 class="section-heading">章节</h2>
         <div id="chapterList" class="chapter-list"></div>
-        <h2 class="section-heading">金句</h2>
+        <!-- 金句默认挂在章节卡片内；空档金句或模型没出章节时才用得上这个标题 -->
+        <h2 id="quoteHeading" class="section-heading" hidden>金句</h2>
         <div id="quoteList" class="quote-list"></div>
       </div>
     </section>
@@ -203,13 +205,24 @@
       <div id="notesEmpty" class="state" hidden>
         <svg class="icon state-icon" aria-hidden="true"><use href="#i-note"/></svg>
         <p id="notesEmptyTitle" class="state-title">还没有笔记</p>
-        <p class="state-text">
+        <p id="notesEmptyText" class="state-text">
           播放时点播放器上的「笔记」按钮，或按 <kbd>n</kbd>，
           就能记下当前时间点的一条笔记。
         </p>
       </div>
     </section>
   </main>
+
+  <!-- 手动滚开或在搜索时，给一条随时回到播放位置的路。
+       放在面板之外：面板入场动画带 transform，会把内部的 fixed 定位参照系改掉。 -->
+  <button id="followPill" class="follow-pill" hidden>
+    <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <circle cx="8" cy="8" r="4.25"/>
+      <circle cx="8" cy="8" r="0.5" fill="currentColor" stroke="none"/>
+      <path d="M8 1.25v2M8 12.75v2M1.25 8h2M12.75 8h2"/>
+    </svg>
+    <span>回到当前句</span>
+  </button>
 
   <!-- 划词解释浮层 -->
   <div id="explainTooltip" class="explain-tooltip" hidden>

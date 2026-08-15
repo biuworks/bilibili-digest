@@ -400,6 +400,65 @@ test("部分块为空或畸形时，合并仍然产出其余块的结果", () =>
 });
 
 // ============================================================
+// 金句归类到章节
+// ============================================================
+
+const CHAPTERS = [
+  { title: "开场", timestampSeconds: 0 },
+  { title: "训练目标", timestampSeconds: 112 },
+  { title: "泛化实验", timestampSeconds: 276 },
+];
+
+test("金句按时间戳归入所属章节，边界归前一章", () => {
+  const { grouped, orphans } = AI.groupQuotesIntoChapters(CHAPTERS, [
+    { quote: "开场白", timestampSeconds: 30 },
+    { quote: "正好压在边界", timestampSeconds: 112 },
+    { quote: "泛化的金句", timestampSeconds: 300 },
+  ]);
+
+  assert.deepEqual(
+    grouped.map((group) => group.quotes.map((quote) => quote.quote)),
+    [["开场白"], ["正好压在边界"], ["泛化的金句"]],
+  );
+  assert.deepEqual(orphans, []);
+});
+
+test("章节空档里的金句归入前一个章节", () => {
+  const { grouped } = AI.groupQuotesIntoChapters(CHAPTERS, [
+    { quote: "落在空档", timestampSeconds: 200 },
+  ]);
+  assert.deepEqual(grouped[1].quotes.map((quote) => quote.quote), ["落在空档"]);
+});
+
+test("第一章之前的金句归为 orphan，而不是塞进第一章", () => {
+  const lateChapters = CHAPTERS.filter((chapter) => chapter.timestampSeconds > 0);
+  const { grouped, orphans } = AI.groupQuotesIntoChapters(lateChapters, [
+    { quote: "片头语", timestampSeconds: 5 },
+    { quote: "正文金句", timestampSeconds: 300 },
+  ]);
+
+  assert.deepEqual(grouped.map((group) => group.quotes.length), [0, 1]);
+  assert.deepEqual(orphans.map((quote) => quote.quote), ["片头语"]);
+});
+
+test("没有章节时金句全部归为 orphan", () => {
+  const { grouped, orphans } = AI.groupQuotesIntoChapters([], [
+    { quote: "唯一金句", timestampSeconds: 42 },
+  ]);
+  assert.deepEqual(grouped, []);
+  assert.equal(orphans.length, 1);
+});
+
+test("畸形输入不抛错：非数组或时间戳缺失的条目被忽略", () => {
+  const { grouped, orphans } = AI.groupQuotesIntoChapters(null, [
+    { quote: "没有时间戳" },
+    { quote: "有效金句", timestampSeconds: 10 },
+  ]);
+  assert.deepEqual(grouped, []);
+  assert.deepEqual(orphans.map((quote) => quote.quote), ["有效金句"]);
+});
+
+// ============================================================
 // 笔记上下文
 // ============================================================
 

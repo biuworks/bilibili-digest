@@ -136,7 +136,7 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote };`,
+    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes };`,
     context,
   );
 
@@ -202,6 +202,82 @@ test("没有概览时保持空态，不会摆出一个空壳", async () => {
   assert.equal(ctx.el("overviewResult").hidden, true);
   assert.equal(ctx.el("overviewEmpty").hidden, false);
   assert.equal(ctx.state.analysis, null);
+});
+
+test("开新标签页时事件成对触发，同一次加载只发一个请求", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = "BV1xx411c7mD";
+
+  // onActivated 与 onUpdated 会前后脚各触发一次同步，
+  // 两次并发的 loadTranscript 必须合并成一次请求，否则视频会拉两遍。
+  await Promise.all([ctx.loadTranscript(), ctx.loadTranscript()]);
+
+  assert.equal(
+    ctx.sent.filter((message) => message.action === "fetchTranscript").length,
+    1,
+    "并发触发的两次加载不该真的拉两遍字幕",
+  );
+});
+
+test("加载期间切了视频，旧视频的结果不写入界面", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = "BV1xx411c7mD";
+
+  // 卡住请求，模拟网络慢：期间用户切到了另一个视频。
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const original = ctx.chrome.runtime.sendMessage;
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    if (message.action === "fetchTranscript") {
+      await gate;
+      return transcriptResult();
+    }
+    return original(message);
+  };
+
+  const pending = ctx.loadTranscript();
+  ctx.state.bvid = "BV1yy411c7mD";
+  release();
+  await pending;
+
+  assert.equal(
+    ctx.state.data,
+    null,
+    "结果回来时票已对不上：旧视频的字幕不该闪一下又覆盖新视频的界面",
+  );
+});
+
+test("概览生成期间切了视频，旧视频的概览不写入界面", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = "BV1xx411c7mD";
+  await ctx.loadTranscript();
+
+  // 卡住概览生成：期间用户切到另一个视频。
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const original = ctx.chrome.runtime.sendMessage;
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    if (message.action === "analyzeTranscript") {
+      await gate;
+      return { success: true, analysis: ANALYSIS };
+    }
+    return original(message);
+  };
+
+  const pending = ctx.analyze();
+  ctx.state.bvid = "BV1yy411c7mD";
+  release();
+  await pending;
+
+  assert.equal(
+    ctx.state.analysis,
+    null,
+    "旧视频的概览回来时票已对不上，不能覆盖新视频的概览区",
+  );
 });
 
 test("缓存里带着顺句结果时，直接显示顺过的文字", async () => {
@@ -620,6 +696,77 @@ test("换视频时上一个视频的搜索词不会带过来", async () => {
 });
 
 // ============================================================
+// 笔记与「本视频」的参照物
+// ============================================================
+
+test("不在播放页时，「本视频」不显示笔记也不发 getNotes 请求", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = null;
+  ctx.state.notesScope = "video";
+
+  await ctx.loadNotes();
+
+  assert.ok(
+    !ctx.sent.some((message) => message.action === "getNotes"),
+    "没有「本视频」可参照时向 background 要 null，拿回来的是全部笔记，等于把别的视频的笔记冒充成本视频的",
+  );
+  assert.equal(ctx.el("notesEmpty").hidden, false);
+  // 「没有视频」的描述必须与 idle 态完全一致，不能出现第二种说法。
+  assert.equal(ctx.el("notesEmptyTitle").textContent, "打开一个 B 站视频");
+  assert.equal(
+    ctx.el("notesEmptyText").textContent,
+    "在 bilibili.com 的播放页打开本面板，就能阅读该视频的字幕。",
+  );
+});
+
+test("「全部」不受影响：不在播放页也能浏览历史笔记", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = null;
+  ctx.state.notesScope = "all";
+
+  await ctx.loadNotes();
+
+  const request = ctx.sent.find((message) => message.action === "getNotes");
+  assert.equal(request.bvid, null, "「全部」就该要全部");
+  assert.equal(ctx.el("notesEmptyTitle").textContent, "还没有任何笔记");
+});
+
+test("金句按钮的「已保存」跟着笔记数据走：删除笔记后立刻解锁", async () => {
+  // 该视频在 5 秒处已有一条笔记；概览金句 ANALYSIS.keyQuotes[0] 也在 0:05。
+  const notes = [
+    { bvid: "BV1xx411c7mD", page: 1, timestampSeconds: 5, id: "note_x" },
+  ];
+  const ctx = createContext({ transcript: transcriptResult({ analysis: ANALYSIS }) });
+  const original = ctx.chrome.runtime.sendMessage;
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    if (message.action === "getNotes") return { success: true, notes };
+    return original(message);
+  };
+  ctx.state.bvid = "BV1xx411c7mD";
+
+  await ctx.loadTranscript();
+
+  // 章节卡的第 3 个孩子是嵌套金句卡；金句卡的第 3 个孩子是操作行，里面有存笔记按钮。
+  const chapter = ctx.el("chapterList").children[0];
+  const quoteCard = chapter.children[2];
+  const saveBtn = quoteCard.children[2].children[0];
+
+  assert.equal(saveBtn.textContent, "已保存", "该时刻已有笔记，按钮就该是已保存");
+  assert.equal(saveBtn.disabled, true);
+
+  // 笔记被删掉，重读数据后按钮解锁——不能还僵在「已保存」。
+  notes.length = 0;
+  await ctx.syncQuoteButtonsWithNotes();
+
+  assert.equal(
+    saveBtn.textContent,
+    "存为笔记",
+    "笔记删了，概览里的「已保存」必须跟着解锁，两处数据要同步",
+  );
+  assert.equal(saveBtn.disabled, false);
+});
+
+// ============================================================
 // 笔记回看
 // ============================================================
 
@@ -720,3 +867,4 @@ test("生成失败只影响概览这一块，字幕仍然可读", async () => {
     "概览失败不该把整个面板打回错误态，字幕还在",
   );
 });
+

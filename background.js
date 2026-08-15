@@ -1014,11 +1014,27 @@ async function handleSaveNote({ bvid: bvidInput, page = 1, timestamp, text: manu
     createdAt: Date.now(),
   };
 
+  // 同一时刻只该有一条笔记：金句重复点「存为笔记」、或同一秒连按 n，都会攒出
+  // 内容重复的笔记。去重放在串行队列里做，双击并发时也不会两边都插进去。
+  let existing = null;
   await mutateNotes((notes) => {
+    existing =
+      notes.find(
+        (item) =>
+          item.bvid === bvid &&
+          Number(item.page || 1) === pageNumber &&
+          item.timestampSeconds === seconds,
+      ) || null;
+    if (existing) return notes;
     notes.unshift(note);
     if (notes.length > MAX_NOTES) notes.splice(MAX_NOTES);
     return notes;
   });
+
+  if (existing) {
+    // 对调用方而言「已存在」也是成功：按钮照常显示「已保存」，不再广播刷新。
+    return { success: true, duplicate: true, note: existing };
+  }
 
   // 侧边栏可能开着笔记页，通知它刷新。
   chrome.runtime.sendMessage({ action: "noteSaved", note }).catch(() => {});

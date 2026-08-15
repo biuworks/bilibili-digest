@@ -41,9 +41,51 @@ const el = (id) => document.getElementById(id);
 // 用 querySelector 找行的话，上千段的视频全量重画就是 O(n²)，切视图会卡。
 const segmentView = {
   rows: [], // 与 segments 同下标
-  byId: new Map(), // 分段 id → { row, text }
+  byId: new Map(), // 分段 id → { row, text, searchText }
   activeRow: null,
 };
+
+// 金句按钮的「已保存」完全跟着真实笔记数据走，不靠会话内存硬记：
+// videoNoteSeconds 是「当前视频已有笔记的时刻集合」，渲染、保存、删除都从它派生。
+let videoNoteSeconds = new Set();
+
+// 已渲染的金句按钮引用（quoteKey → { button, seconds }），
+// 笔记数据变化时用来同步按钮状态，不必整块重渲染概览。
+const quoteSaveButtons = new Map();
+
+// 金句笔记的标识：同一视频同一时刻只有一条，重渲染后按钮状态也能对得上。
+function quoteNoteKey(quote) {
+  return `${state.bvid}:${state.page}:${quote.timestampSeconds}:${quote.quote}`;
+}
+
+// 从笔记存储里重读当前视频已有的笔记时刻。
+async function refreshVideoNoteSeconds() {
+  if (!state.bvid) {
+    videoNoteSeconds = new Set();
+    return;
+  }
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: "getNotes",
+      bvid: state.bvid,
+    });
+    videoNoteSeconds = new Set(
+      (result?.notes || []).map((note) => Number(note.timestampSeconds)),
+    );
+  } catch (error) {
+    // 读不到就保持现状：按钮状态旧一点，总比全盘解锁误加重复笔记好。
+  }
+}
+
+// 笔记增删后，把概览里金句按钮的「已保存 / 存为笔记」与真实数据对齐。
+async function syncQuoteButtonsWithNotes() {
+  await refreshVideoNoteSeconds();
+  for (const { button, seconds } of quoteSaveButtons.values()) {
+    const saved = videoNoteSeconds.has(seconds);
+    button.disabled = saved;
+    button.textContent = saved ? "已保存" : "存为笔记";
+  }
+}
 
 // ============================================================
 // 渲染调度
@@ -77,6 +119,9 @@ function setView(view, errorResult = null) {
   state.view = view;
   state.errorResult = errorResult;
 
+  // 取字幕期间让刷新按钮的图标转起来，明示「正在做」。
+  el("refreshBtn").classList.toggle("spinning", view === "loading");
+
   if (view === "error" && errorResult) {
     const needLogin = errorResult.error === "NEED_LOGIN";
     el("errorTitle").textContent = needLogin ? "字幕需要登录" : "没能取到字幕";
@@ -90,7 +135,9 @@ function setView(view, errorResult = null) {
 function switchTab(tab) {
   state.tab = tab;
   for (const button of document.querySelectorAll(".tab")) {
-    button.classList.toggle("active", button.dataset.tab === tab);
+    const active = button.dataset.tab === tab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
   }
   hideExplain();
   updateFollowPill();
@@ -131,6 +178,9 @@ async function syncWithActiveTab({ force = false } = {}) {
     state.data = null;
     state.analysis = null;
     setView("idle");
+    // 笔记页不跟字幕管线走：离开视频页后「本视频」立刻没了参照物，
+    // 重读一遍，别让上一个视频的笔记赖在列表里。
+    if (state.tab === "notes") loadNotes();
     return;
   }
 
@@ -150,48 +200,100 @@ async function syncWithActiveTab({ force = false } = {}) {
 // 字幕
 // ============================================================
 
+// 同一视频的同一次取字幕只有一个在途请求。开新标签页/从别的页点进视频时，
+// onActivated 和 onUpdated 会前后脚各触发一次同步，不合并就会拉两遍、
+// 界面闪两下。相同 key 的调用共享同一个 promise；不同 key 的调用
+// （换视频、强制刷新）排队等上一个落地再发，避免两个结果先后到达互相覆盖。
+let transcriptLoad = null; // { key, promise }
+
+// 消息通道偶尔会无声无息地死掉（service worker 被回收时）。sendMessage 的
+// promise 若永远不落地，后面所有加载都会卡在「等上一个」上，所以设一道保险。
+const TRANSCRIPT_FETCH_TIMEOUT_MS = 30_000;
+
+function withTimeout(promise, ms, message) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 async function loadTranscript({ force = false } = {}) {
-  el("loadingTitle").textContent = "正在获取字幕…";
-  el("loadingSubtitle").textContent = force ? "已跳过缓存" : "";
-  el("videoMeta").hidden = true;
-  setView("loading");
+  const key = `${state.bvid}:${state.page}:${force ? "force" : "normal"}`;
+  if (transcriptLoad?.key === key) return transcriptLoad.promise;
+  if (transcriptLoad) await transcriptLoad.promise;
 
-  let result;
+  const promise = (async () => {
+    // 请求发出后用户可能又切了视频：结果回来时先对一下「票」，
+    // 票对不上就不写界面，旧视频的字幕不会闪一下又换掉。
+    const requestedBvid = state.bvid;
+    const requestedPage = state.page;
+
+    el("loadingTitle").textContent = "正在获取字幕…";
+    el("loadingSubtitle").textContent = force ? "已跳过缓存" : "";
+    el("videoMeta").hidden = true;
+    setView("loading");
+
+    let result;
+    try {
+      result = await withTimeout(
+        chrome.runtime.sendMessage({
+          action: "fetchTranscript",
+          bvid: requestedBvid,
+          page: requestedPage,
+          forceRefresh: force,
+        }),
+        TRANSCRIPT_FETCH_TIMEOUT_MS,
+        "字幕获取超时，请重试。",
+      );
+    } catch (error) {
+      if (state.bvid !== requestedBvid || state.page !== requestedPage) return;
+      setView("error", { message: error.message });
+      return;
+    }
+
+    if (state.bvid !== requestedBvid || state.page !== requestedPage) return;
+
+    if (!result?.success) {
+      if (result?.videoInfo) renderMeta(result.videoInfo, null, false);
+      setView("error", result);
+      return;
+    }
+
+    state.data = result;
+    state.activeIndex = -1;
+    // 之前顺过的句、翻过的译随缓存一起回来了，直接复用，不必再花一次钱。
+    state.polished = result.polished || {};
+    state.translated = result.translated || {};
+    state.polishRun += 1;
+    // 缓存里有就直接摆出来，否则用户会以为上次白跑了。
+    state.polishMode = Object.keys(state.polished).length > 0;
+    state.isChinese = BILI_TRANSCRIPT.isChineseSubtitle(result.language);
+    state.transcriptMode = Object.keys(state.translated).length > 0 ? "bilingual" : "original";
+    renderMeta(result.videoInfo, result, result.fromCache);
+    renderSegments(result.segments);
+    // 换了视频，上一个视频的搜索词不该继续过滤新列表。
+    closeSearch();
+    updateTranscriptControls();
+    await restoreOverview(result.analysis);
+    setView("ready");
+  })();
+
+  transcriptLoad = { key, promise };
   try {
-    result = await chrome.runtime.sendMessage({
-      action: "fetchTranscript",
-      bvid: state.bvid,
-      page: state.page,
-      forceRefresh: force,
-    });
-  } catch (error) {
-    setView("error", { message: error.message });
-    return;
+    return await promise;
+  } finally {
+    // 只清自己这一趟：等待期间可能已经有新的加载把它换掉了。
+    if (transcriptLoad?.promise === promise) transcriptLoad = null;
   }
-
-  if (!result?.success) {
-    if (result?.videoInfo) renderMeta(result.videoInfo, null, false);
-    setView("error", result);
-    return;
-  }
-
-  state.data = result;
-  state.activeIndex = -1;
-  // 之前顺过的句、翻过的译随缓存一起回来了，直接复用，不必再花一次钱。
-  state.polished = result.polished || {};
-  state.translated = result.translated || {};
-  state.polishRun += 1;
-  // 缓存里有就直接摆出来，否则用户会以为上次白跑了。
-  state.polishMode = Object.keys(state.polished).length > 0;
-  state.isChinese = BILI_TRANSCRIPT.isChineseSubtitle(result.language);
-  state.transcriptMode = Object.keys(state.translated).length > 0 ? "bilingual" : "original";
-  renderMeta(result.videoInfo, result, result.fromCache);
-  renderSegments(result.segments);
-  // 换了视频，上一个视频的搜索词不该继续过滤新列表。
-  closeSearch();
-  updateTranscriptControls();
-  restoreOverview(result.analysis);
-  setView("ready");
 }
 
 function renderMeta(videoInfo, result, fromCache) {
@@ -237,7 +339,12 @@ function renderSegments(segments = []) {
     row.addEventListener("click", (event) => onEntryClick(event, segment.start));
     fragment.appendChild(row);
     segmentView.rows.push(row);
-    segmentView.byId.set(segment.id, { row, text });
+    segmentView.byId.set(segment.id, {
+      row,
+      text,
+      // 搜索用的可匹配文本在这里一次算好，逐键过滤时直接读，不再每敲一个字符重建。
+      searchText: buildSegmentSearchText(segment),
+    });
   });
   list.appendChild(fragment);
 }
@@ -433,7 +540,9 @@ function jumpToActive() {
 }
 
 // 搜索匹配「屏幕上可能出现过的所有文字」：原文、顺句稿、译文。
-function segmentSearchText(segment) {
+// 结果按分段缓存（renderSegments 建、repaintSegmentText 更新）：逐键过滤时
+// 上千段的视频每敲一个字符就重建并小写化一遍，纯属白烧 CPU。
+function buildSegmentSearchText(segment) {
   return [segment.text, state.polished[segment.id], state.translated[segment.id]]
     .filter(Boolean)
     .join("\n")
@@ -447,8 +556,9 @@ function applySearchFilter(query) {
   let hits = 0;
   let firstHit = null;
   segments.forEach((segment, index) => {
-    const match =
-      !state.searchQuery || segmentSearchText(segment).includes(state.searchQuery);
+    const cached = segmentView.byId.get(segment.id);
+    const searchText = cached?.searchText ?? buildSegmentSearchText(segment);
+    const match = !state.searchQuery || searchText.includes(state.searchQuery);
     if (match) {
       hits += 1;
       if (!firstHit) firstHit = segmentView.rows[index] || null;
@@ -558,7 +668,11 @@ function repaintSegmentText(segmentIds) {
   for (const segment of segments) {
     if (wanted && !wanted.has(segment.id)) continue;
     const nodes = segmentView.byId.get(segment.id);
-    if (nodes) paintSegmentText(nodes.text, segment);
+    if (nodes) {
+      paintSegmentText(nodes.text, segment);
+      // 顺句稿 / 译文变了，搜索要能命中新文字，同步刷新缓存的匹配文本。
+      nodes.searchText = buildSegmentSearchText(segment);
+    }
   }
 }
 
@@ -723,15 +837,21 @@ function resetOverview() {
 }
 
 // 概览随字幕缓存一起回来，有就直接摆出来——否则一次已完成的生成会看起来像失败了。
-function restoreOverview(analysis) {
+async function restoreOverview(analysis) {
   resetOverview();
   if (!analysis) return;
   state.analysis = analysis;
+  // 先对齐笔记数据，再渲染：金句按钮的「已保存」从一开始就跟着真实数据走。
+  await refreshVideoNoteSeconds();
   renderAnalysis(analysis, true);
 }
 
 async function analyze({ force = false } = {}) {
   if (!state.bvid) return;
+  // 与字幕加载同款票据：生成期间用户可能已经切到别的视频，
+  // 旧视频的概览不许写进当前界面。
+  const requestedBvid = state.bvid;
+  const requestedPage = state.page;
   el("overviewEmpty").hidden = true;
   el("overviewResult").hidden = true;
   el("overviewLoading").hidden = false;
@@ -742,13 +862,17 @@ async function analyze({ force = false } = {}) {
   try {
     result = await chrome.runtime.sendMessage({
       action: "analyzeTranscript",
-      bvid: state.bvid,
-      page: state.page,
+      bvid: requestedBvid,
+      page: requestedPage,
       forceRefresh: force,
     });
   } catch (error) {
     result = { success: false, message: error.message };
   }
+
+  // 结果属于旧视频：background 已经把它落进旧视频的缓存，切回去时会自动摆出来。
+  // 这里直接丢弃，loading 态由新视频的 restoreOverview 收掉。
+  if (state.bvid !== requestedBvid || state.page !== requestedPage) return;
 
   el("overviewLoading").hidden = true;
   hideProgress("analysis");
@@ -764,9 +888,96 @@ async function analyze({ force = false } = {}) {
   }
 
   state.analysis = result.analysis;
+  await refreshVideoNoteSeconds();
   renderAnalysis(result.analysis, result.fromCache, {
     failedChunks: result.failedChunks,
   });
+}
+
+function renderChapterCard(chapter) {
+  const card = document.createElement("div");
+  card.className = "chapter";
+
+  const head = document.createElement("div");
+  head.className = "entry-head";
+  const time = document.createElement("span");
+  time.className = "entry-time";
+  time.textContent = chapter.timestamp;
+  const title = document.createElement("span");
+  title.className = "entry-title";
+  title.textContent = chapter.title;
+  head.append(time, title);
+
+  const summary = document.createElement("p");
+  summary.className = "entry-text";
+  summary.textContent = chapter.summary;
+
+  card.append(head, summary);
+  card.addEventListener("click", (event) =>
+    onEntryClick(event, chapter.timestampSeconds),
+  );
+  return card;
+}
+
+function renderQuoteCard(quote, { nested = false } = {}) {
+  const card = document.createElement("div");
+  card.className = nested ? "quote nested" : "quote";
+
+  const head = document.createElement("div");
+  head.className = "entry-head";
+  const time = document.createElement("span");
+  time.className = "entry-time";
+  time.textContent = quote.timestamp;
+  time.addEventListener("click", (event) => {
+    // 嵌套在章节卡里时，点时间戳只该跳金句时刻，不能再冒泡触发章节跳转。
+    if (nested) event.stopPropagation();
+    onEntryClick(event, quote.timestampSeconds);
+  });
+  head.appendChild(time);
+
+  const text = document.createElement("p");
+  text.className = "entry-text";
+  text.textContent = quote.quote;
+
+  const actions = document.createElement("div");
+  actions.className = "entry-actions";
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "ghost-btn";
+  // 「已保存」完全跟着真实笔记数据走：这个时刻已有笔记就禁用，
+  // 笔记删掉后 syncQuoteButtonsWithNotes 会把它解锁回来。
+  const savedKey = quoteNoteKey(quote);
+  const seconds = Number(quote.timestampSeconds);
+  const alreadySaved = videoNoteSeconds.has(seconds);
+  saveBtn.textContent = alreadySaved ? "已保存" : "存为笔记";
+  saveBtn.disabled = alreadySaved;
+  quoteSaveButtons.set(savedKey, { button: saveBtn, seconds });
+  saveBtn.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    if (saveBtn.disabled) return;
+    saveBtn.disabled = true;
+    saveBtn.textContent = "保存中…";
+    // 金句已经是模型整理过的文本，直接落库，不必再润色一遍。
+    const result = await chrome.runtime.sendMessage({
+      action: "saveNote",
+      bvid: state.bvid,
+      page: state.page,
+      timestamp: quote.timestampSeconds,
+      text: quote.quote,
+    });
+    const saved = Boolean(result?.success);
+    if (saved) videoNoteSeconds.add(seconds);
+    saveBtn.textContent = saved ? "已保存" : "保存失败";
+    setTimeout(() => {
+      if (!videoNoteSeconds.has(seconds)) {
+        saveBtn.disabled = false;
+        saveBtn.textContent = "存为笔记";
+      }
+    }, 1500);
+  });
+  actions.appendChild(saveBtn);
+
+  card.append(head, text, actions);
+  return card;
 }
 
 function renderAnalysis(analysis, fromCache, { failedChunks = 0 } = {}) {
@@ -779,80 +990,44 @@ function renderAnalysis(analysis, fromCache, { failedChunks = 0 } = {}) {
   if (failedChunks) parts.push(`${failedChunks} 块失败，结果不完整`);
   el("overviewMeta").textContent = parts.join(" · ");
 
+  // 整块重渲染时清掉旧的按钮引用，避免同步到已经不在 DOM 里的按钮。
+  quoteSaveButtons.clear();
+
+  // 金句按时间戳挂到所属章节下，形成「章节 → 金句」的层次。
+  const { grouped, orphans } = BILI_AI.groupQuotesIntoChapters(
+    analysis.chapters,
+    analysis.keyQuotes,
+  );
+
   const chapters = el("chapterList");
   chapters.textContent = "";
-  for (const chapter of analysis.chapters) {
-    const card = document.createElement("div");
-    card.className = "chapter";
-
-    const head = document.createElement("div");
-    head.className = "entry-head";
-    const time = document.createElement("span");
-    time.className = "entry-time";
-    time.textContent = chapter.timestamp;
-    const title = document.createElement("span");
-    title.className = "entry-title";
-    title.textContent = chapter.title;
-    head.append(time, title);
-
-    const summary = document.createElement("p");
-    summary.className = "entry-text";
-    summary.textContent = chapter.summary;
-
-    card.append(head, summary);
-    card.addEventListener("click", (event) =>
-      onEntryClick(event, chapter.timestampSeconds),
-    );
+  for (const { chapter, quotes } of grouped) {
+    const card = renderChapterCard(chapter);
+    for (const quote of quotes) {
+      card.appendChild(renderQuoteCard(quote, { nested: true }));
+    }
     chapters.appendChild(card);
   }
 
+  const quoteHeading = el("quoteHeading");
   const quotes = el("quoteList");
   quotes.textContent = "";
-  for (const quote of analysis.keyQuotes) {
-    const card = document.createElement("div");
-    card.className = "quote";
+  quoteHeading.hidden = true;
 
-    const head = document.createElement("div");
-    head.className = "entry-head";
-    const time = document.createElement("span");
-    time.className = "entry-time";
-    time.textContent = quote.timestamp;
-    time.addEventListener("click", (event) =>
-      onEntryClick(event, quote.timestampSeconds),
-    );
-    head.appendChild(time);
-
-    const text = document.createElement("p");
-    text.className = "entry-text";
-    text.textContent = quote.quote;
-
-    const actions = document.createElement("div");
-    actions.className = "entry-actions";
-    const saveBtn = document.createElement("button");
-    saveBtn.className = "ghost-btn";
-    saveBtn.textContent = "存为笔记";
-    saveBtn.addEventListener("click", async (event) => {
-      event.stopPropagation();
-      saveBtn.disabled = true;
-      saveBtn.textContent = "保存中…";
-      // 金句已经是模型整理过的文本，直接落库，不必再润色一遍。
-      const result = await chrome.runtime.sendMessage({
-        action: "saveNote",
-        bvid: state.bvid,
-        page: state.page,
-        timestamp: quote.timestampSeconds,
-        text: quote.quote,
-      });
-      saveBtn.textContent = result?.success ? "已保存" : "保存失败";
-      setTimeout(() => {
-        saveBtn.disabled = false;
-        saveBtn.textContent = "存为笔记";
-      }, 1500);
-    });
-    actions.appendChild(saveBtn);
-
-    card.append(head, text, actions);
-    quotes.appendChild(card);
+  if (!grouped.length && analysis.keyQuotes.length) {
+    // 模型没产出章节时退回平铺，金句一行不缺地给用户看。
+    quoteHeading.textContent = "金句";
+    quoteHeading.hidden = false;
+    for (const quote of analysis.keyQuotes) {
+      quotes.appendChild(renderQuoteCard(quote));
+    }
+  } else if (orphans.length) {
+    // 落在第一章之前或空档里的金句单列一组，比硬塞进最近的章节诚实。
+    quoteHeading.textContent = "其他金句";
+    quoteHeading.hidden = false;
+    for (const quote of orphans) {
+      quotes.appendChild(renderQuoteCard(quote));
+    }
   }
 
   el("overviewEmpty").hidden = true;
@@ -864,6 +1039,13 @@ function renderAnalysis(analysis, fromCache, { failedChunks = 0 } = {}) {
 // ============================================================
 
 async function loadNotes() {
+  // 「本视频」需要一个参照物：不在播放页时没有「本视频」可言。
+  // 此时 getNotes(null) 会被 background 理解成「全部」，于是「本视频」里
+  // 摆出一堆别的视频的笔记、按钮全变成「打开」——不许这条路走通。
+  if (state.notesScope === "video" && !state.bvid) {
+    renderNotes([], { noVideo: true });
+    return;
+  }
   const result = await chrome.runtime.sendMessage({
     action: "getNotes",
     bvid: state.notesScope === "video" ? state.bvid : null,
@@ -908,17 +1090,44 @@ function flashActionButton(button, message) {
   if (!label) return;
   const original = label.textContent;
   label.textContent = message;
+  // 轻轻弹一下，让「已复制」这件事有触觉上的确认。Web Animations API
+  // 直接可用；测试桩里的元素没有 animate 方法，用可选链保住兼容。
+  button.animate?.(
+    [
+      { transform: "scale(1)" },
+      { transform: "scale(0.9)" },
+      { transform: "scale(1)" },
+    ],
+    { duration: 180, easing: "ease-out" },
+  );
   setTimeout(() => {
     label.textContent = original;
   }, 1500);
 }
 
-function renderNotes(notes) {
+// 「没有视频」在全面板只有一种说法、一种样式：idle 态与笔记页共用这两个常量。
+const NO_VIDEO_TITLE = "打开一个 B 站视频";
+const NO_VIDEO_TEXT =
+  "在 bilibili.com 的播放页打开本面板，就能阅读该视频的字幕。";
+
+const NOTES_EMPTY_TEXT =
+  "播放时点播放器上的「笔记」按钮，或按 n，就能记下当前时间点的一条笔记。";
+
+function renderNotes(notes, { noVideo = false } = {}) {
   el("notesCount").textContent = notes.length ? `${notes.length} 条` : "";
   el("notesEmpty").hidden = notes.length > 0;
-  // 「本视频」下空着，多半只是这个视频没记过，别让人以为笔记全丢了。
-  el("notesEmptyTitle").textContent =
-    state.notesScope === "video" ? "这个视频还没有笔记" : "还没有任何笔记";
+
+  if (noVideo) {
+    // 文案与 idle 态完全一致；图标沿用笔记空态自己的笔记图标，
+    // 不再另摆一块品牌方砖（那会像视频页右上角的浮动按钮，显得多余）。
+    el("notesEmptyTitle").textContent = NO_VIDEO_TITLE;
+    el("notesEmptyText").textContent = NO_VIDEO_TEXT;
+  } else {
+    // 「本视频」下空着，多半只是这个视频没记过，别让人以为笔记全丢了。
+    el("notesEmptyTitle").textContent =
+      state.notesScope === "video" ? "这个视频还没有笔记" : "还没有任何笔记";
+    el("notesEmptyText").textContent = NOTES_EMPTY_TEXT;
+  }
 
   const list = el("notesList");
   list.textContent = "";
@@ -955,6 +1164,9 @@ function renderNoteCard(note) {
     title: "删除这条笔记",
     onClick: async () => {
       await chrome.runtime.sendMessage({ action: "deleteNote", noteId: note.id });
+      // 数据为准：重读笔记，让概览里对应金句的「已保存」立刻解锁，
+      // 否则删了笔记、切回概览还是一张「已保存」的假象。
+      await syncQuoteButtonsWithNotes();
       loadNotes();
     },
   });
@@ -1202,6 +1414,15 @@ function transcriptAsText() {
 function flashButton(button, text) {
   const original = button.textContent;
   button.textContent = text;
+  // 与 flashActionButton 同款弹跳确认。
+  button.animate?.(
+    [
+      { transform: "scale(1)" },
+      { transform: "scale(0.9)" },
+      { transform: "scale(1)" },
+    ],
+    { duration: 180, easing: "ease-out" },
+  );
   setTimeout(() => {
     button.textContent = original;
   }, 1500);
@@ -1320,7 +1541,12 @@ function setupEventListeners() {
 
   chrome.runtime.onMessage.addListener((message) => {
     if (message?.action === "startDigestFromButton") syncWithActiveTab();
-    if (message?.action === "noteSaved" && state.tab === "notes") loadNotes();
+    if (message?.action === "noteSaved") {
+      // 笔记页刷新列表；概览里金句按钮也同步成「已保存」——
+      // 保存可能来自概览自身，也可能来自播放页的 n 键，都以数据为准。
+      if (state.tab === "notes") loadNotes();
+      syncQuoteButtonsWithNotes();
+    }
     // 笔记先存原始字幕、润色好了再替换正文，所以还有第二次刷新。
     if (message?.action === "noteUpdated" && state.tab === "notes") loadNotes();
     // 概览的分块在 background 里跑，进度只能靠它广播回来。
@@ -1333,6 +1559,9 @@ function setupEventListeners() {
 
 document.addEventListener("DOMContentLoaded", async () => {
   state.windowId = (await chrome.windows.getCurrent()).id;
+  // 「没有视频」的文案单一来源：idle 态与笔记页的空态都从这里取。
+  el("idleTitle").textContent = NO_VIDEO_TITLE;
+  el("idleText").textContent = NO_VIDEO_TEXT;
   setupEventListeners();
   setInterval(trackPlayback, POLL_INTERVAL_MS);
   await syncWithActiveTab();
