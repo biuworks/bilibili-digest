@@ -8,15 +8,21 @@
 
 ---
 
-## 🚀 安装（已上架 Chrome 商店）
+<a id="store-install"></a>
 
-已通过商店审核并公开发布（v0.1.0，2026-08-15）：
+## 🚀 安装（Chrome 与 Edge 商店）
+
+v0.1.0 已通过两家浏览器商店审核并公开发布：
 
 [![Chrome Web Store](https://img.shields.io/badge/Chrome_Web_Store-Digest_for_Bilibili-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc)
+[![Microsoft Edge Add-ons](https://img.shields.io/badge/Microsoft_Edge_Add--ons-Digest_for_Bilibili-0078D7?style=for-the-badge&logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm)
 
-👉 **点击上方蓝色按钮**，在打开的商店页面点「Add to Chrome / 添加到 Chrome」即可安装。
+| 商店 | 上线日期 | 安装链接 |
+| --- | --- | --- |
+| Chrome Web Store | 2026-08-15 | [安装 Digest for Bilibili](https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc) |
+| Microsoft Edge Add-ons | 2026-08-17 | [安装 Digest for Bilibili](https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm) |
 
-> 商店搜索索引有延迟，刚上架时搜索可能还搜不到——用上方按钮直达商店，不影响安装。
+点击对应商店的徽章或表格链接即可安装。商店搜索索引可能稍晚更新，直达链接可正常使用。
 
 ---
 
@@ -58,7 +64,7 @@ AI 会把当时那句字幕整理成通顺的一句话，笔记卡片支持回�
 
 ## 安装
 
-商店安装见顶部 [🚀 安装](#-安装已上架-chrome-商店)。
+商店安装见顶部 [🚀 安装](#store-install)。
 
 Chrome 和 Edge 用的是同一份代码、同一个安装包，功能没有差别。
 两者都需要 116 及以上的版本——这是侧边栏 API 的门槛。

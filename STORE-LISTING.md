@@ -3,6 +3,13 @@
 Chrome 应用商店与 Edge 加载项共用这一份，改动请两边同步。
 这个文件不进安装包（`scripts/package.sh` 走白名单），只作为提交时的稿件来源。
 
+## 发布状态
+
+| 商店 | 版本 | 上线日期 | 链接 |
+| --- | --- | --- | --- |
+| Chrome Web Store | 0.1.0 | 2026-08-15 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
+| Microsoft Edge Add-ons | 0.1.0 | 2026-08-17 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
+
 **不要在说明里罗列模型服务商的名字。** 0.1.0 首次提交时，「使用方法」里列了
 DeepSeek、OpenAI、Anthropic、Gemini、Kimi、智谱、通义千问、硅基流动、OpenRouter
 九个预设名，被 Chrome 应用商店判为「关键字垃圾内容」退回（政策禁止过多或不相关的
@@ -34,7 +41,7 @@ Digest for Bilibili 在 B 站播放页旁边打开一个侧边栏，把当前视
 3. 侧边栏自动加载该视频的字幕。顶部在「字幕 / 概览 / 笔记」三个标签间切换。
 
 隐私
-本扩展没有服务器，开发者不接收、也无法访问你的任何数据。设置、字幕缓存和笔记全部写入 chrome.storage.local，只留在你这台设备上，不使用会同步到浏览器账号的 chrome.storage.sync，卸载扩展时由浏览器一并清除。使用 AI 功能时，相关字幕文本会随请求发往你自己在设置页填写的那个模型服务地址，除此之外不向任何地址发送数据。不埋点、不接入任何分析或广告 SDK、不读取浏览历史、不加载远程代码。完整隐私政策：https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
+本扩展没有开发者运营的服务器。开发者不接收、不存储、也不访问用户数据。设置、字幕缓存和笔记全部保存在扩展的本地存储空间，仅留在用户当前设备上，不使用浏览器账号同步存储；卸载扩展时，这些本地数据会由浏览器一并清除。使用 AI 功能时，相关字幕文本、选中的文字和视频标题会发送到用户在设置页指定的模型服务地址，数据仅用于完成用户主动发起的 AI 功能。扩展没有分析或广告 SDK，不记录浏览历史，也不加载远程代码。完整隐私政策：https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
 
 权限说明
 • 读取和更改 bilibili.com 上的数据 — 在播放页注入「笔记」按钮、识别当前视频编号，并从 B 站官方接口下载字幕文件。仅对视频播放页生效。
@@ -42,7 +49,7 @@ Digest for Bilibili 在 B 站播放页旁边打开一个侧边栏，把当前视
 • 访问你指定的 AI 服务地址 — 安装时不申请。你在设置页点「保存并授权」时，才按你填写的那一个域名单独申请，可以随时在浏览器的扩展详情页收回。
 
 说明
-本扩展是个人开发的第三方工具，与 bilibili 官方没有关联，也未获其授权或背书。AI 功能需要你自备模型服务的 API 密钥，扩展本身不提供 AI 额度。字幕能否读取取决于 B 站是否为该视频提供字幕轨，AI 字幕通常需要你已登录 B 站。
+本扩展是个人开发的第三方工具，与 bilibili 官方没有关联，也未获其授权或背书。AI 功能使用用户自己的模型服务和 API 密钥，相关调用额度由用户选择的模型服务承担。字幕读取取决于 B 站是否为该视频提供字幕轨，部分 AI 字幕需要用户已登录 B 站。
 
 反馈
 Bug 与建议请提交到 https://github.com/biuworks/bilibili-digest/issues

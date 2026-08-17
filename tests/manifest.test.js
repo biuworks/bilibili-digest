@@ -10,6 +10,26 @@ const readText = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const exists = (file) => fs.existsSync(path.join(root, file));
 
 const manifest = readJson("manifest.json");
+const localizedMessages = readJson(
+  `_locales/${manifest.default_locale}/messages.json`,
+);
+const resolveManifestText = (value) => {
+  const match = /^__MSG_([^_].*)__$/.exec(value);
+  return match ? localizedMessages[match[1]]?.message : value;
+};
+const manifestName = resolveManifestText(manifest.name);
+const manifestDescription = resolveManifestText(manifest.description);
+
+test("商店主语言声明为简体中文并随安装包发布本地化消息", () => {
+  assert.equal(manifest.default_locale, "zh_CN");
+  assert.equal(manifest.name, "__MSG_extensionName__");
+  assert.equal(manifest.description, "__MSG_extensionDescription__");
+
+  assert.equal(localizedMessages.extensionName.message, "Digest for Bilibili");
+  assert.ok(localizedMessages.extensionDescription.message.length > 0);
+  assert.ok(localizedMessages.extensionDescription.message.length <= 132);
+  assert.match(readText("scripts/package.sh"), /DIRS=\([^)]*_locales[^)]*\)/);
+});
 
 test("是一份 MV3 清单", () => {
   assert.equal(manifest.manifest_version, 3);
@@ -44,24 +64,24 @@ test("侧边栏全局可用，图标点击交给浏览器处理", () => {
 test("同一份清单能投 Chrome 应用商店和 Edge 加载项", () => {
   // 这两条都是 Edge 认证会直接打回的硬性要求。
   assert.equal(manifest.update_url, undefined, "商店版清单不能带 update_url");
-  for (const field of [manifest.name, manifest.description]) {
+  for (const field of [manifestName, manifestDescription]) {
     assert.doesNotMatch(field, /chrome/i, "名称和描述里不能出现 Chrome");
   }
 });
 
 test("描述不超过 132 字符，且不宣传尚未实现的功能", () => {
   // 商店对这个字段有 132 字符的硬上限，超了要等到上传那一刻才报错。
-  assert.ok(manifest.description.length > 0);
+  assert.ok(manifestDescription.length > 0);
   assert.ok(
-    manifest.description.length <= 132,
-    `描述有 ${manifest.description.length} 字符，超过商店 132 的上限`,
+    manifestDescription.length <= 132,
+    `描述有 ${manifestDescription.length} 字符，超过商店 132 的上限`,
   );
 
   // 描述先于实现出现，就是在向用户承诺一个装完找不到的功能。
   // 认这个消息名而不是「translat」这几个字母：注释里提一句翻译不算接线。
   const translationWired = readText("sidepanel.js").includes("translateSegments");
   if (!translationWired) {
-    for (const field of [manifest.description, readJson("package.json").description]) {
+    for (const field of [manifestDescription, readJson("package.json").description]) {
       assert.doesNotMatch(
         field,
         /bilingual|translation/i,

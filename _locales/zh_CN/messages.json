@@ -1,0 +1,8 @@
+{
+  "extensionName": {
+    "message": "Digest for Bilibili"
+  },
+  "extensionDescription": {
+    "message": "把 B 站视频变成学习资源：字幕阅读、双语对照、AI 章节概览、划词解释，以及带时间戳的笔记。自带模型密钥，笔记与缓存只存在本地。"
+  }
+}
