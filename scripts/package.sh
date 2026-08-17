@@ -26,7 +26,7 @@ FILES=(
   icons/icon128.png
   LICENSE
 )
-DIRS=(lib prompts)
+DIRS=(lib prompts _locales)
 
 version=$(node -p "require('./manifest.json').version")
 out="dist/digest-for-bilibili-${version}.zip"
