@@ -5,6 +5,9 @@ dist/
 .DS_Store
 *.log
 
+# 本地测试、补丁与回滚记录（由 scripts/prune-artifacts.sh 保留最新 6 份）
+artifacts/
+
 # 上游参考源码是本地 git clone，不进入本仓库历史
 # （获取：git clone https://github.com/zarazhangrui/youtube-digest references/youtube-digest）
 references/

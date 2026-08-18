@@ -6,6 +6,9 @@
   "license": "MIT",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "package": "bash scripts/package.sh"
+    "posttest": "npm run artifacts:prune",
+    "package": "bash scripts/package.sh",
+    "postpackage": "npm run artifacts:prune",
+    "artifacts:prune": "bash scripts/prune-artifacts.sh"
   }
 }
