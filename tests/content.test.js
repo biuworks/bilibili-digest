@@ -255,6 +255,29 @@ test("笔记按钮带图标，文案单独放一个 span", async () => {
   assert.ok(button.querySelector(".bili-digest-note-label"));
 });
 
+test("笔记写满本地空间时，播放器按钮说明真实原因", async () => {
+  const dom = createDom();
+  dom.register(".video-toolbar-left");
+  const player = dom.register("#bilibili-player");
+
+  await run({
+    dom,
+    sendMessage: () =>
+      Promise.resolve({
+        success: false,
+        error: "STORAGE_FULL",
+        message: "浏览器本地存储空间不足，已有笔记没有被删除。",
+      }),
+  });
+
+  const button = player.querySelector(`#${NOTE_ID}`);
+  click(button);
+  await settle();
+
+  assert.equal(button.children[1].textContent, "空间不足");
+  assert.match(button.title, /已有笔记没有被删除/);
+});
+
 test("按钮被重渲染删掉后，定时自查会补回来", async () => {
   const dom = createDom();
   const toolbar = dom.register(".video-toolbar-left");

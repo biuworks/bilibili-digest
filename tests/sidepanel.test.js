@@ -22,6 +22,7 @@ const ROOT = path.join(__dirname, "..");
 /** 属性随便读写、方法都不做事的元素桩，够渲染路径用即可。 */
 function createElement(tag = "div") {
   const queried = new Map();
+  const listeners = new Map();
   return {
     tagName: tag,
     className: "",
@@ -53,8 +54,16 @@ function createElement(tag = "div") {
       this.scrolled = true;
     },
     focus() {},
-    addEventListener() {},
+    addEventListener(type, listener) {
+      if (!listeners.has(type)) listeners.set(type, []);
+      listeners.get(type).push(listener);
+    },
     removeEventListener() {},
+    async dispatch(type, event = {}) {
+      for (const listener of listeners.get(type) || []) {
+        await listener({ preventDefault() {}, stopPropagation() {}, ...event });
+      }
+    },
     // 同一个选择器要返回同一个对象，否则写进去的值下次就读不到了。
     querySelector(selector) {
       if (!queried.has(selector)) queried.set(selector, createElement("div"));
@@ -731,6 +740,19 @@ test("「全部」不受影响：不在播放页也能浏览历史笔记", async
   assert.equal(ctx.el("notesEmptyTitle").textContent, "还没有任何笔记");
 });
 
+test("本视频笔记请求携带当前分 P，避免同一 BV 的笔记串页", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = "BV1xx411c7mD";
+  ctx.state.page = 3;
+  ctx.state.notesScope = "video";
+
+  await ctx.loadNotes();
+
+  const request = ctx.sent.find((message) => message.action === "getNotes");
+  assert.equal(request.bvid, "BV1xx411c7mD");
+  assert.equal(request.page, 3);
+});
+
 test("金句按钮的「已保存」跟着笔记数据走：删除笔记后立刻解锁", async () => {
   // 该视频在 5 秒处已有一条笔记；概览金句 ANALYSIS.keyQuotes[0] 也在 0:05。
   const notes = [
@@ -773,6 +795,7 @@ test("金句按钮的「已保存」跟着笔记数据走：删除笔记后立�
 const NOTE = {
   id: "note_1",
   bvid: "BV1yy411c7mD",
+  page: 1,
   timestamp: "1:05",
   timestampSeconds: 65,
   timestampedUrl: "https://www.bilibili.com/video/BV1yy411c7mD?t=65",
@@ -783,6 +806,65 @@ const NOTE = {
 
 /** 卡片底部那行提示，renderNoteCard 把它放在最后。 */
 const noticeOf = (card) => card.children[card.children.length - 1];
+
+function findByClass(node, className) {
+  if (String(node.className || "").split(/\s+/).includes(className)) return node;
+  for (const child of node.children || []) {
+    const found = findByClass(child, className);
+    if (found) return found;
+  }
+  return null;
+}
+
+function findButtonByLabel(node, label) {
+  if (
+    node.tagName === "button" &&
+    (node.textContent === label ||
+      (node.children || []).some((child) => child.textContent === label))
+  ) {
+    return node;
+  }
+  for (const child of node.children || []) {
+    const found = findButtonByLabel(child, label);
+    if (found) return found;
+  }
+  return null;
+}
+
+test("笔记可以在卡片内编辑并保存", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = NOTE.bvid;
+  const sent = [];
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    sent.push(message);
+    if (message.action === "updateNote") {
+      return {
+        success: true,
+        note: { ...NOTE, text: "修改后的笔记", updatedAt: Date.now() },
+      };
+    }
+    return { success: true };
+  };
+
+  const card = ctx.renderNoteCard({ ...NOTE });
+  const edit = findButtonByLabel(card, "编辑");
+  assert.ok(edit, "笔记操作区应提供编辑按钮");
+
+  await edit.dispatch("click");
+  const editor = findByClass(card, "note-editor");
+  const textarea = findByClass(card, "note-editor-input");
+  assert.equal(editor.hidden, false);
+  assert.equal(textarea.value, NOTE.text);
+
+  textarea.value = "  修改后的笔记  ";
+  await findButtonByLabel(editor, "保存").dispatch("click");
+
+  assert.equal(sent[0].action, "updateNote");
+  assert.equal(sent[0].noteId, NOTE.id);
+  assert.equal(sent[0].text, "修改后的笔记");
+  assert.equal(findByClass(card, "entry-text").textContent, "修改后的笔记");
+  assert.equal(editor.hidden, true);
+});
 
 test("点当前视频的笔记就地跳转，不开新标签页", async () => {
   const ctx = createContext({ transcript: transcriptResult() });
@@ -807,6 +889,24 @@ test("点别的视频的笔记，确认视频还在之后开新标签页", async
 
   assert.deepEqual(ctx.openedTabs, [NOTE.timestampedUrl], "链接要带上时间戳");
   assert.deepEqual(ctx.seeks, [], "别的视频没法在当前页跳转");
+});
+
+test("同一 BV 的其他分 P 笔记会打开对应页面，不在当前分 P 错误跳转", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = "BV1xx411c7mD";
+  ctx.state.page = 1;
+  ctx.state.tabId = 1;
+  const note = {
+    ...NOTE,
+    bvid: "BV1xx411c7mD",
+    page: 2,
+    timestampedUrl: "https://www.bilibili.com/video/BV1xx411c7mD?p=2&t=65",
+  };
+
+  await ctx.playNote(note, noticeOf(ctx.renderNoteCard(note)));
+
+  assert.deepEqual(ctx.seeks, []);
+  assert.deepEqual(ctx.openedTabs, [note.timestampedUrl]);
 });
 
 test("后台还在润色的笔记，卡片上有「润色中」提示；僵尸标记不显示", async () => {
@@ -867,4 +967,3 @@ test("生成失败只影响概览这一块，字幕仍然可读", async () => {
     "概览失败不该把整个面板打回错误态，字幕还在",
   );
 });
-

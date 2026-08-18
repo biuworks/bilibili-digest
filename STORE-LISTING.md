@@ -61,6 +61,117 @@ Bug 与建议请提交到 https://github.com/biuworks/bilibili-digest/issues
 
 与 `manifest.json` 的 `description` 保持一致（商店对该字段有 132 字符硬上限）。
 
+## 基本字段
+
+**名称**
+
+```text
+Digest for Bilibili
+```
+
+- **类别**：生产力 / Productivity
+- **主要语言**：中文（简体）
+- **可见性**：公开
+- **定价**：免费
+
+**单一用途声明**
+
+```text
+Reads the subtitle track of the Bilibili video the user is currently watching and presents it in a side panel as a searchable, clickable transcript, together with AI-generated learning materials and timestamped notes derived from that transcript.
+```
+
+## 商店素材
+
+| 素材 | 尺寸 | 文件 |
+| --- | --- | --- |
+| 商店图标 | 128×128 | `icons/icon128.png` |
+| Edge 扩展徽标 | 300×300 | `store/logo-300.png` |
+| 字幕截图 | 1280×800 | `store/screenshots/01-transcript.png` |
+| 概览截图 | 1280×800 | `store/screenshots/02-overview.png` |
+| 划词解释截图 | 1280×800 | `store/screenshots/03-explain.png` |
+| 笔记截图 | 1280×800 | `store/screenshots/04-notes.png` |
+
+界面变化后，先重截 `imgs/` 下的四张原图，再运行：
+
+```bash
+python3 scripts/make-store-screenshots.py
+```
+
+截图不得包含 API 密钥、账号昵称、头像等个人信息，也不要出现模型服务商 logo。
+
+## 权限理由
+
+以下英文可直接填入商店后台；改动 `manifest.json` 或存储策略时必须同步核对。
+
+**`sidePanel`**
+
+```text
+The extension's interface lives in the browser side panel next to the video player, so the transcript remains visible while the video plays. Clicking the toolbar icon opens this panel.
+```
+
+**`storage`**
+
+```text
+Stores the user's AI service settings and API key, a local transcript and overview cache, and timestamped notes in extension-local storage. Browser account sync is not used, and the developer cannot access this data.
+```
+
+**`tabs`**
+
+```text
+The side panel needs the active tab URL to identify the current Bilibili video and load its matching subtitle track, and to react when the user navigates to another video. Only the current tab URL and title are used; browsing history is not collected or transmitted.
+```
+
+**主机权限**
+
+```text
+Install-time hosts are limited to Bilibili: www.bilibili.com is used by the content script on video pages, api.bilibili.com provides video metadata and subtitle-track information, and the hdslb.com CDN serves subtitle JSON files.
+
+The optional hosts are for the AI endpoint selected by the user. The extension requests access to that single origin only when the user clicks Save and authorize. Loopback HTTP is accepted only for local model services; non-loopback HTTP addresses are rejected.
+```
+
+**远程代码**：选择“不使用远程代码”。所有 JavaScript 和提示词都随安装包分发；AI
+接口只返回数据，不执行响应内容。
+
+## 数据披露
+
+按商店口径，数据离开设备即属于“收集”。虽然开发者没有服务器，以下两项仍要如实披露：
+
+| 数据类型 | 是否传出设备 | 用途 |
+| --- | --- | --- |
+| 身份验证信息 | 是 | API Key 仅作为请求头发往用户自行配置的 AI 服务，用于认证 |
+| 网站内容 | 是 | 用户主动使用 AI 功能时，相关字幕、选中文字和视频标题发往其自行配置的 AI 服务 |
+
+其余个人身份、健康、财务、位置、通信、浏览记录和用户活动不收集。确认以下三项：
+
+- 数据不出售给第三方。
+- 数据不用于扩展核心功能之外的目的。
+- 数据不用于信用或贷款判断。
+
+**隐私政策 URL**
+
+```text
+https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
+```
+
+上传前用无痕窗口确认该链接可访问，并检查 `PRIVACY.md` 与后台披露一致。
+
+## 发布前检查
+
+- [ ] 更新 `manifest.json` 版本号和本文件的发布状态。
+- [ ] `npm test` 全部通过。
+- [ ] `npm run package` 成功。
+- [ ] ZIP 顶层直接包含 `manifest.json`。
+- [ ] ZIP 不包含测试、截图、README、隐私政策或本文件。
+- [ ] 同一个解压包分别在 Chrome 与 Edge 中旁加载验证。
+- [ ] 字幕、顺句、翻译、概览、解释和笔记流程正常。
+- [ ] 商店截图与当前界面一致且不含个人信息。
+- [ ] 隐私政策 URL 可公开访问。
+- [ ] 联系邮箱已验证。
+- [ ] 每项权限理由均已填写。
+- [ ] 数据披露与 `PRIVACY.md` 一致。
+- [ ] 远程代码选择“否”。
+- [ ] 认证说明附带可验证的视频、步骤和临时测试凭据。
+
 ## 提交时填的「认证说明」
 
 AI 功能要密钥才跑得起来，不给审核员一把钥匙，多半会以「功能无法验证」被退。

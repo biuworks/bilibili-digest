@@ -942,6 +942,42 @@ button {
   content: "”";
 }
 
+.note-editor {
+  margin-top: 8px;
+}
+
+.note-editor-input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 92px;
+  padding: 10px 11px;
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition:
+    border-color var(--dur) var(--ease),
+    box-shadow var(--dur) var(--ease);
+}
+
+.note-editor-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.note-editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 /* 时间戳做成粉色药丸，一眼看出能点——原来是个 span，可点但没有任何提示 */
 .time-btn {
   padding: 2px 8px;

@@ -294,7 +294,15 @@
         page: currentPage(),
         timestamp: Math.floor(video.currentTime || 0),
       });
-      flashNoteButton(result?.success ? "已保存" : "保存失败");
+      if (result?.success) {
+        flashNoteButton("已保存");
+      } else if (result?.error === "STORAGE_FULL") {
+        const button = document.getElementById(NOTE_BUTTON_ID);
+        if (button) button.title = result.message;
+        flashNoteButton("空间不足");
+      } else {
+        flashNoteButton("保存失败");
+      }
     } catch (error) {
       flashNoteButton("保存失败");
     } finally {

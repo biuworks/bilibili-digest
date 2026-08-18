@@ -4,10 +4,3 @@ dist/
 *.crx
 .DS_Store
 *.log
-
-# 本地临时验证材料，不进入版本库
-artifacts/
-
-# 上游参考源码是本地 git clone，不进入本仓库历史
-# （获取：git clone https://github.com/zarazhangrui/youtube-digest references/youtube-digest）
-references/

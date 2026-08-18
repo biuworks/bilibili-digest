@@ -12,6 +12,7 @@ importScripts(
   "lib/ai.js",
   "lib/ai-provider.js",
   "lib/concurrency.js",
+  "lib/learning-store.js",
 );
 
 const DEBUG = false;
@@ -25,8 +26,7 @@ const AI_IDLE_TIMEOUT_MS = 50_000;
 const AI_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 // 加码重试的天花板。再往上多数模型会因超过自身输出上限直接拒绝请求。
 const MAX_OUTPUT_TOKENS = 32_768;
-const NOTES_STORAGE_KEY = "bili_digest_notes";
-const MAX_NOTES = 100;
+const NOTES_STORAGE_KEY = BILI_LEARNING_STORE.NOTES_KEY;
 
 // 内容脚本运行在 B 站页面上下文，不应读到密钥或缓存。
 chrome.storage.local
@@ -34,6 +34,18 @@ chrome.storage.local
   .catch((error) =>
     console.warn("[Bilibili Digest] 无法限制存储访问级别：", error),
   );
+
+// 旧版本直接把笔记数组写在 storage.local。所有读写都等这次轻量迁移完成，
+// 避免升级后的第一个操作和迁移同时改写数据。
+const learningStorage = chrome.storage.local;
+const learningDataReady = BILI_LEARNING_STORE.ensureMigrated({
+  storage: learningStorage,
+}).catch((error) => {
+  console.error("[Bilibili Digest] 学习资料迁移失败：", error);
+  // 迁移失败也先让旧笔记可读；后续写入会给出明确错误，不能因为升级元数据
+  // 没写进去就把用户原有内容整个挡住。
+  return { migrated: false, error };
+});
 
 async function getSettings() {
   const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
@@ -171,12 +183,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === "saveNote") {
     handleSaveNote(message)
       .then(sendResponse)
-      .catch((error) => sendResponse({ success: false, error: error.message }));
+      .catch((error) => sendResponse(noteWriteErrorResponse(error)));
     return true;
   }
 
   if (message?.action === "getNotes") {
-    handleGetNotes(message.bvid)
+    handleGetNotes(message.bvid, message.page)
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
@@ -185,7 +197,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === "deleteNote") {
     handleDeleteNote(message.noteId)
       .then(sendResponse)
-      .catch((error) => sendResponse({ success: false, error: error.message }));
+      .catch((error) => sendResponse(noteWriteErrorResponse(error)));
+    return true;
+  }
+
+  if (message?.action === "updateNote") {
+    handleUpdateNote(message.noteId, message.text)
+      .then(sendResponse)
+      .catch((error) => sendResponse(noteWriteErrorResponse(error)));
     return true;
   }
 
@@ -221,8 +240,9 @@ async function handleFetchTranscript(bvidInput, { page = 1, forceRefresh = false
     const cached = await BILI_CACHE.load(bvid, { page: pageNumber });
     if (cached?.transcript?.length) {
       debugLog("[Bilibili Digest] 命中字幕缓存：", bvid);
+      const restored = await restoreLearningAnalysis(cached, bvid, pageNumber);
       // 标志放在展开之后：旧版本写进缓存的脏标志不能盖过本次的真实值。
-      return { ...cached, success: true, fromCache: true };
+      return { ...restored, success: true, fromCache: true };
     }
   }
 
@@ -275,8 +295,9 @@ async function handleFetchTranscript(bvidInput, { page = 1, forceRefresh = false
       })),
     };
 
-    await BILI_CACHE.save(bvid, result, { page: pageNumber });
-    return { ...result, success: true, fromCache: false };
+    const restored = await restoreLearningAnalysis(result, bvid, pageNumber);
+    await BILI_CACHE.save(bvid, restored, { page: pageNumber });
+    return { ...restored, success: true, fromCache: false };
   } catch (error) {
     console.error("[Bilibili Digest] 字幕获取失败：", error);
     return {
@@ -285,6 +306,17 @@ async function handleFetchTranscript(bvidInput, { page = 1, forceRefresh = false
       message: error.message || "字幕获取失败。",
     };
   }
+}
+
+// 字幕缓存只有 30 天；用户生成过的概览属于学习资料，过期后仍应能与笔记重聚。
+async function restoreLearningAnalysis(payload, bvid, page) {
+  if (payload?.analysis) return payload;
+  await learningDataReady;
+  const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, page, {
+    storage: learningStorage,
+  });
+  if (!record?.analysis) return payload;
+  return { ...payload, analysis: record.analysis, analysisSource: "learning" };
 }
 
 // ============================================================
@@ -575,6 +607,20 @@ async function handleAnalyzeTranscript(bvidInput, { page = 1, forceRefresh = fal
   if (!forceRefresh && cached?.analysis) {
     return { success: true, fromCache: true, analysis: cached.analysis };
   }
+  if (!forceRefresh) {
+    await learningDataReady;
+    const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, pageNumber, {
+      storage: learningStorage,
+    });
+    if (record?.analysis) {
+      return {
+        success: true,
+        fromCache: true,
+        analysisSource: "learning",
+        analysis: record.analysis,
+      };
+    }
+  }
 
   const transcript = cached?.transcript?.length
     ? { ...cached, success: true }
@@ -650,6 +696,19 @@ async function handleAnalyzeTranscript(bvidInput, { page = 1, forceRefresh = fal
       ...persistable(transcript),
       analysis,
     }));
+
+    // 与 30 天字幕缓存分开保存，之后导出时概览不会先于笔记消失。
+    await learningDataReady;
+    await BILI_LEARNING_STORE.saveLearningRecord(
+      {
+        bvid,
+        page: pageNumber,
+        videoTitle: transcript.videoInfo?.title || "",
+        ownerName: transcript.videoInfo?.owner || "",
+        analysis,
+      },
+      { storage: learningStorage },
+    );
 
     return {
       success: true,
@@ -907,8 +966,25 @@ async function handleExplainSelection(selectedText, transcriptContext, videoTitl
 // 笔记的「读—改—写」也要串行：润色是保存后异步落笔的，会和新增 / 删除并发。
 const notesWriteQueue = BILI_CONCURRENCY.createSerialQueue();
 
+function noteWriteErrorResponse(error) {
+  const detail = String(error?.message || error || "");
+  if (/quota|exceed|storage.+full|空间不足/i.test(detail)) {
+    return {
+      success: false,
+      error: "STORAGE_FULL",
+      message: "浏览器本地存储空间不足，已有笔记没有被删除。",
+    };
+  }
+  return {
+    success: false,
+    error: "NOTE_WRITE_FAILED",
+    message: detail || "笔记保存失败，请重试。",
+  };
+}
+
 function mutateNotes(mutate) {
   return notesWriteQueue(async () => {
+    await learningDataReady;
     const stored = await chrome.storage.local.get(NOTES_STORAGE_KEY);
     const notes = Array.isArray(stored[NOTES_STORAGE_KEY]) ? stored[NOTES_STORAGE_KEY] : [];
     const next = mutate(notes);
@@ -958,8 +1034,13 @@ async function polishNoteWhenReady(noteId, context, videoTitle) {
   const polished = await polishNoteText(context, videoTitle);
   await mutateNotes((notes) =>
     notes.map((note) =>
-      note.id === noteId
-        ? { ...note, text: polished || note.text, pending: false }
+      note.id === noteId && note.pending
+        ? {
+            ...note,
+            text: polished || note.text,
+            pending: false,
+            updatedAt: Date.now(),
+          }
         : note,
     ),
   );
@@ -1012,6 +1093,8 @@ async function handleSaveNote({ bvid: bvidInput, page = 1, timestamp, text: manu
     // 界面靠它显示「润色中」；配合 createdAt 识别润色中途挂掉留下的僵尸标记
     pending: Boolean(polishContext),
     createdAt: Date.now(),
+    updatedAt: Date.now(),
+    learningId: BILI_LEARNING_STORE.learningId(bvid, pageNumber),
   };
 
   // 同一时刻只该有一条笔记：金句重复点「存为笔记」、或同一秒连按 n，都会攒出
@@ -1027,7 +1110,6 @@ async function handleSaveNote({ bvid: bvidInput, page = 1, timestamp, text: manu
       ) || null;
     if (existing) return notes;
     notes.unshift(note);
-    if (notes.length > MAX_NOTES) notes.splice(MAX_NOTES);
     return notes;
   });
 
@@ -1042,16 +1124,40 @@ async function handleSaveNote({ bvid: bvidInput, page = 1, timestamp, text: manu
   // 故意不 await：让播放页的按钮立刻得到「已保存」。
   if (polishContext) polishNoteWhenReady(note.id, polishContext, videoTitle);
 
+  // 兼容升级前已经生成、但只存在短期缓存中的概览。
+  if (transcript.analysis) {
+    BILI_LEARNING_STORE.saveLearningRecord(
+      {
+        bvid,
+        page: pageNumber,
+        videoTitle,
+        ownerName: transcript.videoInfo?.owner || "",
+        analysis: transcript.analysis,
+      },
+      { storage: learningStorage },
+    ).catch((error) =>
+      console.warn("[Bilibili Digest] 概览长期保存失败：", error),
+    );
+  }
+
   return { success: true, note };
 }
 
-async function handleGetNotes(bvidInput) {
+async function handleGetNotes(bvidInput, page) {
+  await learningDataReady;
   const stored = await chrome.storage.local.get(NOTES_STORAGE_KEY);
   const notes = Array.isArray(stored[NOTES_STORAGE_KEY]) ? stored[NOTES_STORAGE_KEY] : [];
   const bvid = bvidInput ? BILI_API.parseBvid(bvidInput) : null;
+  const pageNumber = Number(page) > 0 ? Math.floor(Number(page)) : null;
   return {
     success: true,
-    notes: bvid ? notes.filter((note) => note.bvid === bvid) : notes,
+    notes: bvid
+      ? notes.filter(
+          (note) =>
+            note.bvid === bvid &&
+            (!pageNumber || Number(note.page || 1) === pageNumber),
+        )
+      : notes,
     totalCount: notes.length,
   };
 }
@@ -1059,6 +1165,43 @@ async function handleGetNotes(bvidInput) {
 async function handleDeleteNote(noteId) {
   await mutateNotes((notes) => notes.filter((note) => note.id !== noteId));
   return { success: true };
+}
+
+async function handleUpdateNote(noteId, input) {
+  const text = String(input || "").trim();
+  if (!text) {
+    return {
+      success: false,
+      error: "EMPTY_NOTE",
+      message: "笔记正文不能为空。",
+    };
+  }
+  if (text.length > 3000) {
+    return {
+      success: false,
+      error: "NOTE_TOO_LONG",
+      message: "笔记正文不能超过 3000 个字符。",
+    };
+  }
+
+  let updated = null;
+  await mutateNotes((notes) =>
+    notes.map((note) => {
+      if (note.id !== noteId) return note;
+      updated = { ...note, text, pending: false, updatedAt: Date.now() };
+      return updated;
+    }),
+  );
+  if (!updated) {
+    return {
+      success: false,
+      error: "NOTE_NOT_FOUND",
+      message: "这条笔记已经不存在了。",
+    };
+  }
+
+  chrome.runtime.sendMessage({ action: "noteUpdated", noteId }).catch(() => {});
+  return { success: true, note: updated };
 }
 
 // 开新标签页前先问一句视频还在不在，免得用户等页面加载完才看到「稿件不可见」。

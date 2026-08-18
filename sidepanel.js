@@ -68,6 +68,7 @@ async function refreshVideoNoteSeconds() {
     const result = await chrome.runtime.sendMessage({
       action: "getNotes",
       bvid: state.bvid,
+      page: state.page,
     });
     videoNoteSeconds = new Set(
       (result?.notes || []).map((note) => Number(note.timestampSeconds)),
@@ -1049,6 +1050,7 @@ async function loadNotes() {
   const result = await chrome.runtime.sendMessage({
     action: "getNotes",
     bvid: state.notesScope === "video" ? state.bvid : null,
+    page: state.notesScope === "video" ? state.page : null,
   });
   renderNotes(result?.notes || []);
 }
@@ -1178,7 +1180,8 @@ function renderNoteCard(note) {
   text.className = "entry-text";
   text.textContent = note.text;
 
-  const away = note.bvid !== state.bvid;
+  const away =
+    note.bvid !== state.bvid || Number(note.page || 1) !== Number(state.page || 1);
 
   // 看的就是这个视频时，再写一遍标题和 UP 主是废话，白占一行。
   const meta = document.createElement("p");
@@ -1190,6 +1193,66 @@ function renderNoteCard(note) {
 
   const actions = document.createElement("div");
   actions.className = "entry-actions";
+
+  const editor = document.createElement("div");
+  editor.className = "note-editor";
+  editor.hidden = true;
+
+  const editorInput = document.createElement("textarea");
+  editorInput.className = "note-editor-input";
+  editorInput.maxLength = 3000;
+  editorInput.rows = 4;
+  editorInput.setAttribute("aria-label", "笔记正文");
+
+  const editorActions = document.createElement("div");
+  editorActions.className = "note-editor-actions";
+  const cancelEdit = document.createElement("button");
+  cancelEdit.className = "ghost-btn";
+  cancelEdit.textContent = "取消";
+  const saveEdit = document.createElement("button");
+  saveEdit.className = "primary-btn";
+  saveEdit.textContent = "保存";
+  editorActions.append(cancelEdit, saveEdit);
+  editor.append(editorInput, editorActions);
+
+  const closeEditor = () => {
+    editor.hidden = true;
+    text.hidden = false;
+    actions.hidden = false;
+  };
+  cancelEdit.addEventListener("click", closeEditor);
+  saveEdit.addEventListener("click", async () => {
+    const nextText = editorInput.value.trim();
+    if (!nextText) {
+      setNoteNotice(notice, "笔记正文不能为空。");
+      editorInput.focus();
+      return;
+    }
+
+    saveEdit.disabled = true;
+    saveEdit.textContent = "保存中…";
+    try {
+      const result = await chrome.runtime.sendMessage({
+        action: "updateNote",
+        noteId: note.id,
+        text: nextText,
+      });
+      if (!result?.success) {
+        setNoteNotice(notice, result?.message || "保存失败，请重试。");
+        return;
+      }
+      Object.assign(note, result.note);
+      text.textContent = note.text;
+      setNoteNotice(notice, "");
+      closeEditor();
+    } catch (error) {
+      setNoteNotice(notice, "保存失败，请重试。");
+    } finally {
+      saveEdit.disabled = false;
+      saveEdit.textContent = "保存";
+    }
+  });
+
   // 别的视频的笔记要开新标签页，图标换成「外链」，免得点下去才发现跳走了。
   actions.append(
     actionButton({
@@ -1197,6 +1260,19 @@ function renderNoteCard(note) {
       label: away ? "打开" : "播放",
       title: away ? "在新标签页打开原视频并跳到这一刻" : "跳到这个时间点",
       onClick: play,
+    }),
+    actionButton({
+      iconName: "note",
+      label: "编辑",
+      title: "编辑笔记正文",
+      onClick: () => {
+        editorInput.value = note.text;
+        text.hidden = true;
+        actions.hidden = true;
+        editor.hidden = false;
+        setNoteNotice(notice, "");
+        editorInput.focus();
+      },
     }),
     actionButton({
       iconName: "copy",
@@ -1218,7 +1294,7 @@ function renderNoteCard(note) {
     }),
   );
 
-  card.append(head, text, meta, actions, notice);
+  card.append(head, text, meta, actions, editor, notice);
   return card;
 }
 
@@ -1230,7 +1306,10 @@ function setNoteNotice(notice, message, tone = "warn") {
 
 // 同一个视频就地跳转；别的视频开新标签页，开之前先问一句视频还在不在。
 async function playNote(note, notice) {
-  if (note.bvid === state.bvid) {
+  if (
+    note.bvid === state.bvid &&
+    Number(note.page || 1) === Number(state.page || 1)
+  ) {
     seekTo(note.timestampSeconds);
     return;
   }
