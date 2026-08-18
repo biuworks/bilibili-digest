@@ -29,13 +29,32 @@ const state = {
   errorResult: null,
   tab: "transcript",
   notesScope: "video", // video | all
+  notes: [],
   activeIndex: -1,
   lastUserScrollAt: 0,
   lastAutoScrollAt: 0,
   searchQuery: "", // 搜索期间暂停自动跟随，命中行之外全部藏起
+  aiTasks: { analysis: null, rewrite: null },
 };
 
 const el = (id) => document.getElementById(id);
+
+function makeTaskId(kind) {
+  const suffix = globalThis.crypto?.randomUUID?.()
+    || `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  return `${kind}-${suffix}`;
+}
+
+async function startAiTask(kind, target = {}) {
+  const taskId = makeTaskId(kind);
+  const result = await chrome.runtime.sendMessage({
+    action: "startAiTask",
+    taskId,
+    kind,
+    ...target,
+  });
+  return result?.success ? taskId : null;
+}
 
 // 字幕行的 DOM 索引，renderSegments 时重建。直接持有节点引用让查找变 O(1)：
 // 用 querySelector 找行的话，上千段的视频全量重画就是 O(n²)，切视图会卡。
@@ -604,15 +623,15 @@ const PROGRESS_NODES = {
   analysis: { row: null, bar: "overviewProgressBar", text: "overviewProgressText" },
 };
 
-function showProgress(kind, done, total) {
+function showProgress(kind, done, total, message = "") {
   const nodes = PROGRESS_NODES[kind];
   if (!nodes) return;
   if (nodes.row) el(nodes.row).hidden = false;
 
   const percent = total > 0 ? Math.round((done / total) * 100) : 0;
   el(nodes.bar).style.width = `${percent}%`;
-  el(nodes.text).textContent =
-    total > 0 ? `${done}/${total} 批完成（${percent}%）` : "正在准备…";
+  el(nodes.text).textContent = message
+    || (total > 0 ? `${done}/${total} 批完成（${percent}%）` : "正在准备…");
 }
 
 function hideProgress(kind) {
@@ -649,7 +668,8 @@ function updateTranscriptControls(running) {
   button.hidden = !state.isChinese;
   button.disabled = busy;
   button.textContent =
-    running === "polish" ? "顺句中" : state.polishMode ? "原文" : "顺句";
+    running === "polish" ? "顺句中" : state.polishMode ? "恢复原文" : "顺句";
+  el("transcriptProcessMenu").hidden = !state.data;
 
   const modes = el("transcriptMode");
   modes.hidden = !state.data;
@@ -659,6 +679,17 @@ function updateTranscriptControls(running) {
     node.setAttribute("aria-pressed", String(active));
     node.disabled = busy;
   }
+  el("transcriptViewLabel").textContent =
+    running === "polish"
+      ? "顺句中"
+      : state.transcriptMode === "translated"
+        ? "译文"
+        : state.transcriptMode === "bilingual"
+          ? "双语"
+          : state.polishMode
+            ? "顺句"
+            : "原文";
+  el("rewriteStopBtn").hidden = !busy;
 }
 
 // 只重画文字，不重建整个列表——重建会丢掉高亮和滚动位置。
@@ -737,6 +768,7 @@ function orderFromPlayback(todo) {
 }
 
 async function runRewrite(kind, run) {
+  if (state.aiTasks.rewrite) return;
   const task = REWRITE_KINDS[kind];
   const segments = state.data?.segments || [];
   const todo = segments.filter((segment) => !state[task.field][segment.id]);
@@ -744,6 +776,16 @@ async function runRewrite(kind, run) {
     updateTranscriptControls();
     return;
   }
+
+  const taskId = await startAiTask(kind, {
+    bvid: state.bvid,
+    page: state.page,
+  });
+  if (!taskId) {
+    showSegmentNotice(`${task.label}任务已经在运行。`);
+    return;
+  }
+  state.aiTasks.rewrite = { id: taskId, kind, label: task.label };
 
   const batches = task.plan(orderFromPlayback(todo));
   const concurrency = (await loadSettings()).aiConcurrency;
@@ -755,6 +797,7 @@ async function runRewrite(kind, run) {
     if (run !== state.polishRun) return null;
     const result = await chrome.runtime.sendMessage({
       action: task.action,
+      taskId,
       bvid: state.bvid,
       page: state.page,
       segmentIds: batch.map((segment) => segment.id),
@@ -775,7 +818,17 @@ async function runRewrite(kind, run) {
     concurrency,
     runBatch,
     (done, total) => {
-      if (run === state.polishRun) showProgress("rewrite", done, total);
+      if (run === state.polishRun) {
+        showProgress("rewrite", done, total, `正在处理第 ${done}/${total} 批`);
+        chrome.runtime.sendMessage({
+          action: "updateAiTaskProgress",
+          taskId,
+          done,
+          total,
+          phase: "generating",
+          message: `正在处理第 ${done}/${total} 批`,
+        }).catch(() => {});
+      }
     },
   );
 
@@ -800,7 +853,10 @@ async function runRewrite(kind, run) {
     });
   }
 
-  if (run !== state.polishRun) return;
+  if (run !== state.polishRun) {
+    await finishRewriteTask(taskId, "canceled", "已取消");
+    return;
+  }
   hideProgress("rewrite");
 
   const failures = results.filter((result) => result.status === "rejected");
@@ -815,6 +871,33 @@ async function runRewrite(kind, run) {
     showSegmentNotice(`${failures.length} 批失败，再点一次「${task.label}」可以补齐。`);
   }
   updateTranscriptControls();
+  await finishRewriteTask(taskId, "completed", "已完成");
+}
+
+async function finishRewriteTask(taskId, taskState, message) {
+  if (state.aiTasks.rewrite?.id !== taskId) return;
+  await chrome.runtime.sendMessage({
+    action: "finishAiTask",
+    taskId,
+    state: taskState,
+    message,
+  }).catch(() => {});
+  state.aiTasks.rewrite = null;
+  hideProgress("rewrite");
+  updateTranscriptControls();
+}
+
+async function cancelRewrite() {
+  const task = state.aiTasks.rewrite;
+  if (!task) return;
+  state.polishRun += 1;
+  showProgress("rewrite", 0, 0, "正在停止…");
+  await chrome.runtime.sendMessage({ action: "cancelAiTask", taskId: task.id });
+  if (task.kind === "translate") {
+    state.transcriptMode = "original";
+    repaintSegmentText();
+  }
+  showSegmentNotice(`${task.label}已取消，已经完成的内容会保留。`);
 }
 
 // ============================================================
@@ -831,7 +914,8 @@ function resetOverview() {
   // 上一个视频可能把这里改成了错误提示，换视频时要还原。
   empty.querySelector(".state-title").textContent = OVERVIEW_EMPTY_TITLE;
   empty.querySelector(".state-text").textContent = OVERVIEW_EMPTY_TEXT;
-  el("analyzeBtn").textContent = "生成概览";
+  const label = el("analyzeBtn").querySelector("span");
+  if (label) label.textContent = "生成概览";
   empty.hidden = false;
   el("overviewLoading").hidden = true;
   el("overviewResult").hidden = true;
@@ -849,10 +933,24 @@ async function restoreOverview(analysis) {
 
 async function analyze({ force = false } = {}) {
   if (!state.bvid) return;
+  if (state.aiTasks.analysis) return;
   // 与字幕加载同款票据：生成期间用户可能已经切到别的视频，
   // 旧视频的概览不许写进当前界面。
   const requestedBvid = state.bvid;
   const requestedPage = state.page;
+  const taskId = await startAiTask("analysis", {
+    bvid: requestedBvid,
+    page: requestedPage,
+  });
+  if (!taskId) {
+    el("overviewEmpty").querySelector(".state-title").textContent = "概览正在生成";
+    el("overviewEmpty").querySelector(".state-text").textContent =
+      "同一视频已经有一个概览任务在运行。";
+    return;
+  }
+  state.aiTasks.analysis = { id: taskId, bvid: requestedBvid, page: requestedPage };
+  el("cancelAnalysisBtn").disabled = false;
+  el("cancelAnalysisBtn").textContent = "停止生成";
   el("overviewEmpty").hidden = true;
   el("overviewResult").hidden = true;
   el("overviewLoading").hidden = false;
@@ -863,6 +961,7 @@ async function analyze({ force = false } = {}) {
   try {
     result = await chrome.runtime.sendMessage({
       action: "analyzeTranscript",
+      taskId,
       bvid: requestedBvid,
       page: requestedPage,
       forceRefresh: force,
@@ -873,6 +972,10 @@ async function analyze({ force = false } = {}) {
 
   // 结果属于旧视频：background 已经把它落进旧视频的缓存，切回去时会自动摆出来。
   // 这里直接丢弃，loading 态由新视频的 restoreOverview 收掉。
+  if (state.aiTasks.analysis?.id === taskId) state.aiTasks.analysis = null;
+  el("cancelAnalysisBtn").disabled = false;
+  el("cancelAnalysisBtn").textContent = "停止生成";
+
   if (state.bvid !== requestedBvid || state.page !== requestedPage) return;
 
   el("overviewLoading").hidden = true;
@@ -880,11 +983,19 @@ async function analyze({ force = false } = {}) {
 
   if (!result?.success) {
     // 概览失败不该把整个面板打回错误态——字幕还在，用户可以继续读。
+    const canceled = result?.error === "TASK_CANCELED";
+    if (canceled && state.analysis) {
+      renderAnalysis(state.analysis, true);
+      el("overviewMeta").textContent += " · 已取消重新生成，保留上次结果";
+      return;
+    }
     el("overviewEmpty").hidden = false;
-    el("overviewEmpty").querySelector(".state-title").textContent = "概览生成失败";
+    el("overviewEmpty").querySelector(".state-title").textContent =
+      canceled ? "概览生成已取消" : "概览生成失败";
     el("overviewEmpty").querySelector(".state-text").textContent =
-      result?.message || "请稍后重试。";
-    el("analyzeBtn").textContent = "重试";
+      canceled ? "已经完成的请求不会写入残缺概览，可以随时重新生成。" : result?.message || "请稍后重试。";
+    const label = el("analyzeBtn").querySelector("span");
+    if (label) label.textContent = canceled ? "重新生成" : "重试";
     return;
   }
 
@@ -893,6 +1004,15 @@ async function analyze({ force = false } = {}) {
   renderAnalysis(result.analysis, result.fromCache, {
     failedChunks: result.failedChunks,
   });
+}
+
+async function cancelAnalysis() {
+  const task = state.aiTasks.analysis;
+  if (!task) return;
+  el("cancelAnalysisBtn").disabled = true;
+  el("cancelAnalysisBtn").textContent = "正在停止…";
+  showProgress("analysis", 0, 0, "正在停止…");
+  await chrome.runtime.sendMessage({ action: "cancelAiTask", taskId: task.id });
 }
 
 function renderChapterCard(chapter) {
@@ -1116,8 +1236,10 @@ const NOTES_EMPTY_TEXT =
   "播放时点播放器上的「笔记」按钮，或按 n，就能记下当前时间点的一条笔记。";
 
 function renderNotes(notes, { noVideo = false } = {}) {
-  el("notesCount").textContent = notes.length ? `${notes.length} 条` : "";
-  el("notesEmpty").hidden = notes.length > 0;
+  const list = Array.isArray(notes) ? notes : [];
+  state.notes = list;
+  el("notesCount").textContent = list.length ? `${list.length} 条` : "";
+  el("notesEmpty").hidden = list.length > 0;
 
   if (noVideo) {
     // 文案与 idle 态完全一致；图标沿用笔记空态自己的笔记图标，
@@ -1131,9 +1253,17 @@ function renderNotes(notes, { noVideo = false } = {}) {
     el("notesEmptyText").textContent = NOTES_EMPTY_TEXT;
   }
 
-  const list = el("notesList");
-  list.textContent = "";
-  for (const note of notes) list.appendChild(renderNoteCard(note));
+  const listNode = el("notesList");
+  listNode.textContent = "";
+  for (const note of list) listNode.appendChild(renderNoteCard(note));
+}
+
+// Object.assign 不会删除响应里已经移除的 aiDraft；同步笔记状态时要按新对象完整替换。
+function replaceNoteState(target, source) {
+  for (const key of Object.keys(target)) {
+    if (!(key in source)) delete target[key];
+  }
+  Object.assign(target, source);
 }
 
 function renderNoteCard(note) {
@@ -1194,6 +1324,74 @@ function renderNoteCard(note) {
   const actions = document.createElement("div");
   actions.className = "entry-actions";
 
+  const aiDraft = document.createElement("div");
+  aiDraft.className = "note-ai-draft";
+  const aiDraftHead = document.createElement("div");
+  aiDraftHead.className = "note-ai-draft-head";
+  aiDraftHead.textContent = "AI 优化建议";
+  const aiDraftWarning = document.createElement("p");
+  aiDraftWarning.className = "note-ai-draft-warning";
+  const aiDraftText = document.createElement("p");
+  aiDraftText.className = "note-ai-draft-text";
+  const aiDraftActions = document.createElement("div");
+  aiDraftActions.className = "note-ai-draft-actions";
+  const keepCurrent = document.createElement("button");
+  keepCurrent.className = "ghost-btn";
+  keepCurrent.textContent = "保留当前";
+  const appendDraft = document.createElement("button");
+  appendDraft.className = "ghost-btn";
+  appendDraft.textContent = "追加内容";
+  const replaceDraft = document.createElement("button");
+  replaceDraft.className = "primary-btn";
+  replaceDraft.textContent = "替换当前";
+  aiDraftActions.append(keepCurrent, appendDraft, replaceDraft);
+  aiDraft.append(aiDraftHead, aiDraftWarning, aiDraftText, aiDraftActions);
+
+  const renderAiDraft = () => {
+    const draft = note.aiDraft;
+    aiDraft.hidden = !draft?.text;
+    aiDraftText.textContent = draft?.text || "";
+    aiDraftWarning.hidden = !draft?.conflict;
+    aiDraftWarning.textContent = draft?.conflict
+      ? "AI 生成期间笔记已被修改；这份建议基于修改前的版本，请确认后再采用。"
+      : "";
+  };
+
+  const resolveDraft = async (mode, button) => {
+    for (const item of [keepCurrent, appendDraft, replaceDraft]) item.disabled = true;
+    const original = button.textContent;
+    button.textContent = "处理中…";
+    try {
+      const result = await chrome.runtime.sendMessage({
+        action: "resolveNoteDraft",
+        noteId: note.id,
+        mode,
+        expectedRevision: note.revision,
+      });
+      if (!result?.success) {
+        if (result?.note) {
+          replaceNoteState(note, result.note);
+          text.textContent = note.text;
+        }
+        renderAiDraft();
+        setNoteNotice(notice, result?.message || "处理失败，请重试。");
+        return;
+      }
+      replaceNoteState(note, result.note);
+      text.textContent = note.text;
+      renderAiDraft();
+      setNoteNotice(notice, "");
+    } catch (error) {
+      setNoteNotice(notice, "处理失败，请重试。");
+    } finally {
+      for (const item of [keepCurrent, appendDraft, replaceDraft]) item.disabled = false;
+      button.textContent = original;
+    }
+  };
+  keepCurrent.addEventListener("click", () => resolveDraft("discard", keepCurrent));
+  appendDraft.addEventListener("click", () => resolveDraft("append", appendDraft));
+  replaceDraft.addEventListener("click", () => resolveDraft("replace", replaceDraft));
+
   const editor = document.createElement("div");
   editor.className = "note-editor";
   editor.hidden = true;
@@ -1241,8 +1439,9 @@ function renderNoteCard(note) {
         setNoteNotice(notice, result?.message || "保存失败，请重试。");
         return;
       }
-      Object.assign(note, result.note);
+      replaceNoteState(note, result.note);
       text.textContent = note.text;
+      renderAiDraft();
       setNoteNotice(notice, "");
       closeEditor();
     } catch (error) {
@@ -1254,6 +1453,66 @@ function renderNoteCard(note) {
   });
 
   // 别的视频的笔记要开新标签页，图标换成「外链」，免得点下去才发现跳走了。
+  let optimizeTaskId = null;
+  const optimizeButton = actionButton({
+    iconName: "ai",
+    label: "AI 优化",
+    title: "让 AI 基于当前正文生成优化建议",
+    onClick: async (button) => {
+      const label = button.querySelector("span");
+      if (optimizeTaskId) {
+        if (label) label.textContent = "正在停止…";
+        await chrome.runtime.sendMessage({
+          action: "cancelAiTask",
+          taskId: optimizeTaskId,
+        });
+        return;
+      }
+
+      const taskId = makeTaskId("note-refine");
+      // 先占位再 await，双击也只会启动一次。
+      optimizeTaskId = taskId;
+      if (label) label.textContent = "停止";
+      setNoteNotice(notice, "AI 正在优化当前笔记…", "muted");
+      try {
+        const started = await chrome.runtime.sendMessage({
+          action: "startAiTask",
+          taskId,
+          kind: "note-refine",
+          noteId: note.id,
+        });
+        if (!started?.success) {
+          setNoteNotice(notice, started?.message || "这条笔记已经在优化中。");
+          return;
+        }
+        const result = await chrome.runtime.sendMessage({
+          action: "generateNoteDraft",
+          taskId,
+          noteId: note.id,
+        });
+        if (!result?.success) {
+          setNoteNotice(
+            notice,
+            result?.error === "TASK_CANCELED"
+              ? "AI 优化已取消，当前正文保持不变。"
+              : result?.message || "AI 优化失败，请重试。",
+            result?.error === "TASK_CANCELED" ? "muted" : "warn",
+          );
+          return;
+        }
+        replaceNoteState(note, result.note);
+        text.textContent = note.text;
+        renderAiDraft();
+        setNoteNotice(notice, "");
+      } catch (error) {
+        setNoteNotice(notice, "AI 优化失败，请重试。");
+      } finally {
+        if (optimizeTaskId === taskId) optimizeTaskId = null;
+        if (label) label.textContent = "AI 优化";
+      }
+    },
+  });
+
   actions.append(
     actionButton({
       iconName: away ? "external" : "play",
@@ -1274,6 +1533,7 @@ function renderNoteCard(note) {
         editorInput.focus();
       },
     }),
+    optimizeButton,
     actionButton({
       iconName: "copy",
       label: "复制",
@@ -1294,7 +1554,8 @@ function renderNoteCard(note) {
     }),
   );
 
-  card.append(head, text, meta, actions, editor, notice);
+  renderAiDraft();
+  card.append(head, text, meta, actions, editor, aiDraft, notice);
   return card;
 }
 
@@ -1361,7 +1622,13 @@ function hideExplain() {
 // 选中字幕里的一段文字后，在选区上方浮出「解释」按钮。
 function onSelectionChange() {
   const selection = window.getSelection();
-  if (!selection || selection.isCollapsed || !selection.rangeCount) {
+  if (
+    state.tab !== "transcript"
+    || !selection
+    || selection.isCollapsed
+    || !selection.rangeCount
+    || !el("transcriptList").contains(selection.anchorNode)
+  ) {
     el("explainTooltip").hidden = true;
     return;
   }
@@ -1521,13 +1788,29 @@ function exportTranscript() {
   if (!state.data) return;
   const title = state.data.videoInfo?.title || state.bvid;
   const header = `${title}\n${state.data.videoInfo?.owner || ""}\nhttps://www.bilibili.com/video/${state.bvid}\n\n`;
-  const blob = new Blob([header + transcriptAsText()], {
-    type: "text/plain;charset=utf-8",
-  });
+  downloadText(header + transcriptAsText(), `${sanitizeFilename(title)}.txt`, "text/plain;charset=utf-8");
+}
+
+function exportNotes() {
+  const notes = state.notes || [];
+  const grouped = state.notesScope === "all";
+  const markdown = BILI_LEARNING_STORE.notesAsMarkdown(notes, { grouped });
+  if (!markdown) {
+    flashButton(el("exportNotesBtn"), "没有笔记");
+    return;
+  }
+  const filename = grouped
+    ? "bilibili-digest-笔记.md"
+    : `${sanitizeFilename(notes[0]?.videoTitle || state.data?.videoInfo?.title || state.bvid || "笔记")}-笔记.md`;
+  downloadText(markdown, filename, "text/markdown;charset=utf-8");
+}
+
+function downloadText(text, filename, type) {
+  const blob = new Blob([text], { type });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `${sanitizeFilename(title)}.txt`;
+  link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -1546,12 +1829,19 @@ function setupEventListeners() {
   });
   el("optionsBtn").addEventListener("click", () => chrome.runtime.openOptionsPage());
   el("errorRetryBtn").addEventListener("click", () => loadTranscript({ force: true }));
-  el("polishBtn").addEventListener("click", togglePolish);
+  el("polishBtn").addEventListener("click", () => {
+    el("transcriptProcessMenu").open = false;
+    togglePolish();
+  });
   for (const button of el("transcriptMode").querySelectorAll(".segmented-btn")) {
-    button.addEventListener("click", () => setTranscriptMode(button.dataset.mode));
+    button.addEventListener("click", () => {
+      el("transcriptProcessMenu").open = false;
+      setTranscriptMode(button.dataset.mode);
+    });
   }
   el("copyBtn").addEventListener("click", copyTranscript);
   el("exportBtn").addEventListener("click", exportTranscript);
+  el("exportNotesBtn").addEventListener("click", exportNotes);
   el("searchBtn").addEventListener("click", () => {
     if (el("searchRow").hidden) openSearch();
     else closeSearch();
@@ -1575,6 +1865,8 @@ function setupEventListeners() {
   });
   el("analyzeBtn").addEventListener("click", () => analyze());
   el("reanalyzeBtn").addEventListener("click", () => analyze({ force: true }));
+  el("cancelAnalysisBtn").addEventListener("click", cancelAnalysis);
+  el("rewriteStopBtn").addEventListener("click", cancelRewrite);
   el("notesScopeVideo").addEventListener("click", () => setNotesScope("video"));
   el("notesScopeAll").addEventListener("click", () => setNotesScope("all"));
   el("explainBtn").addEventListener("click", explainSelection);
@@ -1630,7 +1922,17 @@ function setupEventListeners() {
     if (message?.action === "noteUpdated" && state.tab === "notes") loadNotes();
     // 概览的分块在 background 里跑，进度只能靠它广播回来。
     if (message?.action === "aiProgress") {
-      showProgress(message.kind, message.done, message.total);
+      const current = state.aiTasks[message.kind];
+      if (!message.taskId || current?.id === message.taskId) {
+        showProgress(message.kind, message.done, message.total, message.message);
+      }
+    }
+    if (message?.action === "aiTaskChanged" && message.task?.state === "running") {
+      const task = message.task;
+      const current = state.aiTasks[task.kind === "analysis" ? "analysis" : "rewrite"];
+      if (current?.id === task.id && task.message) {
+        showProgress(task.kind === "analysis" ? "analysis" : "rewrite", task.done, task.total, task.message);
+      }
     }
     return false;
   });

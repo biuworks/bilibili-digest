@@ -237,6 +237,14 @@ test("短字幕不分块，避免多余的往返", () => {
   assert.equal(chunks[0].startSeconds, 0);
 });
 
+test("较短模式可以降低不分块阈值", () => {
+  const segments = makeAnalysisSegments(20, 250);
+  assert.equal(AI.planAnalysisChunks(segments).length, 1);
+  assert.ok(
+    AI.planAnalysisChunks(segments, { maxChars: 3500, singleChars: 3500 }).length > 1,
+  );
+});
+
 test("长字幕按分段边界切块，每块不超过上限", () => {
   const chunks = AI.planAnalysisChunks(makeAnalysisSegments(100, 300), {
     maxChars: 6000,

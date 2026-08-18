@@ -91,6 +91,28 @@
       </label>
 
       <label class="field">
+        <span class="field-label">概览分块</span>
+        <select id="analysisChunkMode">
+          <option value="auto">自动（推荐）</option>
+          <option value="short">较短——请求更多，更稳定</option>
+          <option value="long">较长——请求更少，速度更快</option>
+        </select>
+        <span class="field-hint">
+          自动模式适合大多数模型；上下文较小或容易漏内容时选较短，
+          上下文充足且希望减少请求时选较长。
+        </span>
+      </label>
+
+      <label class="field">
+        <span class="field-label">重复上下文字符数</span>
+        <input id="analysisOverlapChars" type="number" min="0" max="2000" step="50">
+        <span class="field-hint">
+          每个分块会附带上一块结尾的这部分文字，减少边界处断句和语义丢失。
+          默认 400；设为 0 可关闭，通常无需超过 1000。
+        </span>
+      </label>
+
+      <label class="field">
         <span class="field-label">单次请求超时（秒）</span>
         <input id="aiTimeoutSeconds" type="number" min="30" max="600" step="10">
         <span class="field-hint">

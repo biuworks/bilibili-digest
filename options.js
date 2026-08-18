@@ -14,6 +14,8 @@ const fields = {
   model: document.getElementById("aiModel"),
   concurrency: document.getElementById("aiConcurrency"),
   timeout: document.getElementById("aiTimeoutSeconds"),
+  chunkMode: document.getElementById("analysisChunkMode"),
+  overlapChars: document.getElementById("analysisOverlapChars"),
 };
 const customFields = document.getElementById("customFields");
 const presetHint = document.getElementById("presetHint");
@@ -61,6 +63,8 @@ function currentSettings() {
     aiModel: fields.model.value,
     aiConcurrency: fields.concurrency.value,
     aiTimeoutSeconds: fields.timeout.value,
+    analysisChunkMode: fields.chunkMode.value,
+    analysisOverlapChars: fields.overlapChars.value,
   });
 }
 
@@ -149,6 +153,8 @@ async function load() {
   fields.model.value = settings.aiModel;
   fields.concurrency.value = settings.aiConcurrency;
   fields.timeout.value = settings.aiTimeoutSeconds;
+  fields.chunkMode.value = settings.analysisChunkMode;
+  fields.overlapChars.value = settings.analysisOverlapChars;
 
   const preset = BILI_SETTINGS.presetById(settings.presetId);
   if (preset?.docsUrl) applyPresetHintOnly(preset);
@@ -213,6 +219,8 @@ async function save() {
   // 越界的数值会被 normalize 夹回范围内，把结果写回表单，避免显示与实际不符。
   fields.concurrency.value = settings.aiConcurrency;
   fields.timeout.value = settings.aiTimeoutSeconds;
+  fields.chunkMode.value = settings.analysisChunkMode;
+  fields.overlapChars.value = settings.analysisOverlapChars;
   showStatus("已保存并授权");
   return true;
 }

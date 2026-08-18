@@ -118,6 +118,20 @@ test("模型列表使用原生 select，不依赖会过滤当前输入值的 dat
   assert.match(html, /<select[^>]+id=["']modelOptions["'][^>]+hidden/i);
 });
 
+test("设置页提供自动、较短、较长三档概览分块模式", () => {
+  const html = fs.readFileSync(path.join(ROOT, "options.html"), "utf8");
+  assert.match(html, /id=["']analysisChunkMode["']/);
+  for (const value of ["auto", "short", "long"]) {
+    assert.match(html, new RegExp(`value=["']${value}["']`));
+  }
+});
+
+test("设置页允许调整相邻分块重复的上下文字符数", () => {
+  const html = fs.readFileSync(path.join(ROOT, "options.html"), "utf8");
+  assert.match(html, /id=["']analysisOverlapChars["']/);
+  assert.match(html, /重复上下文字符数/);
+});
+
 test("拉取后在原位置用下拉框替换输入框，不显示两套重复控件", async () => {
   const ctx = await createContext();
 

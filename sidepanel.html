@@ -36,6 +36,10 @@
       <path d="M8.6 2.4H4.1c-.6 0-1.1.5-1.1 1.1v8.9c0 .6.5 1.1 1.1 1.1h6.2c.6 0 1.1-.5 1.1-1.1V7.9"/>
       <path d="M11.2 2.2a1.4 1.4 0 0 1 2 2L9.1 8.3l-2.5.5.5-2.5Z"/>
     </symbol>
+    <symbol id="i-ai" viewBox="0 0 16 16">
+      <path d="M8 1.7c.5 2.5 1.8 3.8 4.3 4.3C9.8 6.5 8.5 7.8 8 10.3 7.5 7.8 6.2 6.5 3.7 6 6.2 5.5 7.5 4.2 8 1.7Z"/>
+      <path d="M12.5 9.5c.2 1.3.9 2 2.2 2.2-1.3.2-2 .9-2.2 2.2-.2-1.3-.9-2-2.2-2.2 1.3-.2 2-.9 2.2-2.2Z"/>
+    </symbol>
   </svg>
 
   <header class="app-header">
@@ -112,13 +116,19 @@
       <div class="panel-toolbar">
         <span id="segmentCount" class="muted"></span>
         <div class="panel-toolbar-actions">
-          <!-- 三视图人人都有（中文字幕译成英文，外文字幕译成中文）；顺句只给中文字幕 -->
-          <button id="polishBtn" class="ghost-btn" title="用 AI 补标点、改同音错别字（需先配置 AI 服务）" hidden>顺句</button>
-          <div id="transcriptMode" class="segmented" hidden>
-            <button class="segmented-btn active" data-mode="original">原文</button>
-            <button class="segmented-btn" data-mode="translated">译文</button>
-            <button class="segmented-btn" data-mode="bilingual">双语</button>
-          </div>
+          <!-- 显示方式与顺句集中在一个入口，窄侧边栏里不摆四组竞争按钮。 -->
+          <details id="transcriptProcessMenu" class="action-menu" hidden>
+            <summary class="ghost-btn"><span id="transcriptViewLabel">原文</span></summary>
+            <div class="action-menu-popover">
+              <div id="transcriptMode" class="action-menu-options" hidden>
+                <button class="segmented-btn active" data-mode="original">原文</button>
+                <button class="segmented-btn" data-mode="translated">译文</button>
+                <button class="segmented-btn" data-mode="bilingual">双语</button>
+              </div>
+              <div class="action-menu-divider"></div>
+              <button id="polishBtn" type="button" title="用 AI 补标点、改同音错别字">顺句</button>
+            </div>
+          </details>
           <button id="searchBtn" class="ghost-btn icon-only" title="在字幕里搜索（快捷键 /）" aria-label="搜索字幕">
             <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
               <circle cx="7" cy="7" r="4.75"/>
@@ -143,6 +153,7 @@
           <div class="progress-bar" id="rewriteProgressBar"></div>
         </div>
         <span class="muted" id="rewriteProgressText"></span>
+        <button id="rewriteStopBtn" class="ghost-btn task-stop-btn" type="button">停止</button>
       </div>
       <div id="transcriptList" class="transcript-list"></div>
     </section>
@@ -175,13 +186,16 @@
         <p class="state-text muted-small">
           长视频会切成多块并发生成，可在设置页调整并发数。
         </p>
+        <div class="state-actions">
+          <button id="cancelAnalysisBtn" class="ghost-btn task-stop-btn" type="button">停止生成</button>
+        </div>
       </div>
 
       <div id="overviewResult" hidden>
         <div class="panel-toolbar">
           <span id="overviewMeta" class="muted"></span>
           <div class="panel-toolbar-actions">
-            <button id="reanalyzeBtn" class="ghost-btn">重新生成</button>
+            <button id="reanalyzeBtn" class="ghost-btn" type="button">重新生成</button>
           </div>
         </div>
         <h2 class="section-heading">章节</h2>
@@ -199,7 +213,10 @@
           <button id="notesScopeVideo" class="segmented-btn active">本视频</button>
           <button id="notesScopeAll" class="segmented-btn">全部</button>
         </div>
-        <span id="notesCount" class="muted"></span>
+        <div class="panel-toolbar-actions">
+          <span id="notesCount" class="muted"></span>
+          <button id="exportNotesBtn" class="ghost-btn" type="button" title="导出 Markdown">导出</button>
+        </div>
       </div>
       <div id="notesList" class="notes-list"></div>
       <div id="notesEmpty" class="state" hidden>
@@ -244,6 +261,7 @@
   <script src="lib/transcript.js"></script>
   <script src="lib/ai.js"></script>
   <script src="lib/concurrency.js"></script>
+  <script src="lib/learning-store.js"></script>
   <script src="settings.js"></script>
   <script src="sidepanel.js"></script>
 </body>

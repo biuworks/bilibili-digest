@@ -12,6 +12,7 @@ importScripts(
   "lib/ai.js",
   "lib/ai-provider.js",
   "lib/concurrency.js",
+  "lib/task-manager.js",
   "lib/learning-store.js",
 );
 
@@ -27,6 +28,67 @@ const AI_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 // 加码重试的天花板。再往上多数模型会因超过自身输出上限直接拒绝请求。
 const MAX_OUTPUT_TOKENS = 32_768;
 const NOTES_STORAGE_KEY = BILI_LEARNING_STORE.NOTES_KEY;
+
+const AI_TASK_KINDS = new Set(["analysis", "polish", "translate", "note-refine"]);
+const aiTasks = BILI_TASKS.createTaskManager({
+  onChange(task) {
+    chrome.runtime.sendMessage({ action: "aiTaskChanged", task }).catch(() => {});
+  },
+});
+
+function aiTaskKey(message) {
+  if (message.kind === "note-refine") return `note-refine:${message.noteId || ""}`;
+  const page = Number(message.page) > 0 ? Math.floor(Number(message.page)) : 1;
+  return `${message.kind}:${message.bvid || ""}:p${page}`;
+}
+
+function startAiTask(message) {
+  if (!message.taskId || !AI_TASK_KINDS.has(message.kind)) {
+    return {
+      success: false,
+      error: "INVALID_TASK",
+      message: "任务参数不完整。",
+    };
+  }
+  return aiTasks.start({
+    id: String(message.taskId),
+    kind: message.kind,
+    key: aiTaskKey(message),
+  });
+}
+
+function taskCanceledError() {
+  const error = new Error("任务已取消。");
+  error.code = "TASK_CANCELED";
+  return error;
+}
+
+function throwIfTaskCanceled(signal) {
+  if (signal?.aborted) throw taskCanceledError();
+}
+
+async function runManagedAiOperation(taskId, operation, { autoFinish = false } = {}) {
+  const signal = taskId ? aiTasks.signal(taskId) : null;
+  if (taskId && !signal) {
+    return { success: false, error: "TASK_NOT_FOUND", message: "任务已经结束。" };
+  }
+
+  let result;
+  try {
+    result = await operation(signal);
+  } catch (error) {
+    result = aiErrorResponse(error);
+  } finally {
+    if (taskId && autoFinish) {
+      const canceled = signal?.aborted;
+      aiTasks.finish(taskId, {
+        state: canceled ? "canceled" : result?.success ? "completed" : "failed",
+        message: canceled ? "已取消" : result?.success ? "已完成" : "生成失败",
+      });
+    }
+  }
+  return result;
+}
 
 // 内容脚本运行在 B 站页面上下文，不应读到密钥或缓存。
 chrome.storage.local
@@ -106,6 +168,41 @@ async function handleOpenSidePanel(tab) {
 // ============================================================
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.action === "startAiTask") {
+    sendResponse(startAiTask(message));
+    return false;
+  }
+
+  if (message?.action === "getAiTasks") {
+    sendResponse({ success: true, tasks: aiTasks.list() });
+    return false;
+  }
+
+  if (message?.action === "cancelAiTask") {
+    sendResponse(aiTasks.cancel(message.taskId));
+    return false;
+  }
+
+  if (message?.action === "finishAiTask") {
+    const task = aiTasks.finish(message.taskId, {
+      state: message.state,
+      message: message.message,
+    });
+    sendResponse({ success: Boolean(task), task });
+    return false;
+  }
+
+  if (message?.action === "updateAiTaskProgress") {
+    const task = aiTasks.progress(message.taskId, {
+      done: message.done,
+      total: message.total,
+      phase: message.phase,
+      message: message.message,
+    });
+    sendResponse({ success: Boolean(task), task });
+    return false;
+  }
+
   if (message?.action === "fetchTranscript") {
     handleFetchTranscript(message.bvid, {
       page: message.page,
@@ -140,30 +237,42 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.action === "analyzeTranscript") {
-    handleAnalyzeTranscript(message.bvid, {
-      page: message.page,
-      forceRefresh: message.forceRefresh,
-    })
+    runManagedAiOperation(
+      message.taskId,
+      (signal) => handleAnalyzeTranscript(message.bvid, {
+        page: message.page,
+        forceRefresh: message.forceRefresh,
+        signal,
+        taskId: message.taskId,
+      }),
+      { autoFinish: true },
+    )
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
 
   if (message?.action === "polishSegments") {
-    handlePolishSegments(message.bvid, {
-      page: message.page,
-      segmentIds: message.segmentIds,
-    })
+    runManagedAiOperation(message.taskId, (signal) =>
+      handlePolishSegments(message.bvid, {
+        page: message.page,
+        segmentIds: message.segmentIds,
+        signal,
+      }),
+    )
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
 
   if (message?.action === "translateSegments") {
-    handleTranslateSegments(message.bvid, {
-      page: message.page,
-      segmentIds: message.segmentIds,
-    })
+    runManagedAiOperation(message.taskId, (signal) =>
+      handleTranslateSegments(message.bvid, {
+        page: message.page,
+        segmentIds: message.segmentIds,
+        signal,
+      }),
+    )
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
@@ -203,6 +312,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   if (message?.action === "updateNote") {
     handleUpdateNote(message.noteId, message.text)
+      .then(sendResponse)
+      .catch((error) => sendResponse(noteWriteErrorResponse(error)));
+    return true;
+  }
+
+  if (message?.action === "generateNoteDraft") {
+    runManagedAiOperation(
+      message.taskId,
+      (signal) => handleGenerateNoteDraft(message.noteId, {
+        signal,
+        taskId: message.taskId,
+      }),
+      { autoFinish: true },
+    )
+      .then(sendResponse)
+      .catch((error) => sendResponse(aiErrorResponse(error)));
+    return true;
+  }
+
+  if (message?.action === "resolveNoteDraft") {
+    handleResolveNoteDraft(
+      message.noteId,
+      message.mode,
+      message.expectedRevision,
+    )
       .then(sendResponse)
       .catch((error) => sendResponse(noteWriteErrorResponse(error)));
     return true;
@@ -366,7 +500,9 @@ async function requestAiCompletion({
   maxTokens,
   temperature,
   responseFormat,
+  signal,
 }) {
+  throwIfTaskCanceled(signal);
   const settings = await getSettings();
   const check = BILI_SETTINGS.validate(settings);
   if (!check.ok) {
@@ -382,6 +518,7 @@ async function requestAiCompletion({
 
   // 空响应有两种能自愈的成因，各给一次机会，所以最多三轮。
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    throwIfTaskCanceled(signal);
     const request = BILI_AI_PROVIDER.buildChatRequest({
       settings,
       messages,
@@ -389,7 +526,7 @@ async function requestAiCompletion({
       temperature,
       responseFormat: format,
     });
-    const data = await sendAiRequest(settings, request);
+    const data = await sendAiRequest(settings, request, signal);
 
     const text = BILI_AI_PROVIDER.parseChatResponse(settings.protocol, data);
     if (text.trim()) return { text, settings };
@@ -419,7 +556,7 @@ async function requestAiCompletion({
 }
 
 // 真正发出请求，守住超时与响应大小（分工见 AI_IDLE_TIMEOUT_MS 处的说明）。
-async function sendAiRequest(settings, request) {
+async function sendAiRequest(settings, request, externalSignal) {
   const controller = new AbortController();
   let timeoutKind = "";
   let idleTimer;
@@ -430,6 +567,9 @@ async function sendAiRequest(settings, request) {
     timeoutKind = kind;
     controller.abort();
   };
+  const onExternalAbort = () => abortFor("external");
+  if (externalSignal?.aborted) onExternalAbort();
+  else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
   const resetIdleTimer = () => {
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => abortFor("idle"), AI_IDLE_TIMEOUT_MS);
@@ -461,6 +601,9 @@ async function sendAiRequest(settings, request) {
 
     return data;
   } catch (error) {
+    if (timeoutKind === "external" || externalSignal?.aborted) {
+      throw taskCanceledError();
+    }
     if (timeoutKind === "idle") {
       const timeout = new Error("响应传到一半断了，请重试。");
       timeout.code = "AI_IDLE_TIMEOUT";
@@ -483,6 +626,7 @@ async function sendAiRequest(settings, request) {
     }
     throw error;
   } finally {
+    externalSignal?.removeEventListener("abort", onExternalAbort);
     clearTimeout(idleTimer);
     clearTimeout(hardTimer);
   }
@@ -526,6 +670,9 @@ function aiErrorResponse(error) {
     "INVALID_BASE_URL",
     "AI_NETWORK_ERROR",
   ];
+  if (error.code === "TASK_CANCELED") {
+    return { success: false, error: "TASK_CANCELED", message: "任务已取消。" };
+  }
   if (actionable.includes(error.code)) {
     return { success: false, error: error.code, message: error.message };
   }
@@ -590,13 +737,17 @@ function persistable(transcript) {
 }
 
 // 侧边栏可能没开着，广播失败是正常的。
-function reportProgress(kind, done, total) {
+function reportProgress(kind, done, total, { taskId, phase, message } = {}) {
+  if (taskId) aiTasks.progress(taskId, { done, total, phase, message });
   chrome.runtime
-    .sendMessage({ action: "aiProgress", kind, done, total })
+    .sendMessage({ action: "aiProgress", kind, done, total, phase, message, taskId })
     .catch(() => {});
 }
 
-async function handleAnalyzeTranscript(bvidInput, { page = 1, forceRefresh = false } = {}) {
+async function handleAnalyzeTranscript(
+  bvidInput,
+  { page = 1, forceRefresh = false, signal, taskId } = {},
+) {
   const bvid = BILI_API.parseBvid(bvidInput);
   if (!bvid) {
     return { success: false, error: "INVALID_BVID", message: "没有识别到 BV 号。" };
@@ -628,8 +779,10 @@ async function handleAnalyzeTranscript(bvidInput, { page = 1, forceRefresh = fal
   if (!transcript.success) return transcript;
 
   try {
+    throwIfTaskCanceled(signal);
     const settings = await getSettings();
-    const chunks = BILI_AI.planAnalysisChunks(transcript.segments);
+    const chunkOptions = BILI_SETTINGS.analysisChunkOptions(settings);
+    const chunks = BILI_AI.planAnalysisChunks(transcript.segments, chunkOptions);
     if (!chunks.length) {
       return { success: false, error: "NO_TRANSCRIPT", message: "没有可用的字幕。" };
     }
@@ -645,21 +798,38 @@ async function handleAnalyzeTranscript(bvidInput, { page = 1, forceRefresh = fal
     );
 
     debugLog(`[Bilibili Digest] 概览分 ${chunks.length} 块，并发 ${settings.aiConcurrency}`);
-    reportProgress("analysis", 0, chunks.length);
+    reportProgress("analysis", 0, chunks.length, {
+      taskId,
+      phase: "generating",
+      message: `正在生成第 0/${chunks.length} 块`,
+    });
 
-    const analyzeOne = (chunk) => analyzeChunk(chunk, chunks.length, common);
+    const analyzeOne = (chunk) => {
+      throwIfTaskCanceled(signal);
+      return analyzeChunk(chunk, chunks.length, common, { signal });
+    };
     const results = await BILI_CONCURRENCY.mapWithConcurrency(
       chunks,
       settings.aiConcurrency,
       analyzeOne,
-      (done, total) => reportProgress("analysis", done, total),
+      (done, total) => reportProgress("analysis", done, total, {
+        taskId,
+        phase: "generating",
+        message: `正在生成第 ${done}/${total} 块`,
+      }),
     );
+    throwIfTaskCanceled(signal);
 
     // 部分块失败多半是偶发超时或限流，静默补一轮；全军覆没通常是配置错误，不补。
     const failedIndexes = results
       .map((result, index) => (result.status === "rejected" ? index : -1))
       .filter((index) => index >= 0);
     if (failedIndexes.length && failedIndexes.length < chunks.length) {
+      reportProgress("analysis", chunks.length - failedIndexes.length, chunks.length, {
+        taskId,
+        phase: "retrying",
+        message: `正在重试 ${failedIndexes.length} 个失败分块`,
+      });
       debugLog(`[Bilibili Digest] ${failedIndexes.length} 块失败，自动补一轮`);
       const retried = await BILI_CONCURRENCY.mapWithConcurrency(
         failedIndexes.map((index) => chunks[index]),
@@ -670,6 +840,7 @@ async function handleAnalyzeTranscript(bvidInput, { page = 1, forceRefresh = fal
         if (retried[i].status === "fulfilled") results[chunkIndex] = retried[i];
       });
     }
+    throwIfTaskCanceled(signal);
 
     const parts = results
       .filter((result) => result.status === "fulfilled" && result.value)
@@ -681,6 +852,11 @@ async function handleAnalyzeTranscript(bvidInput, { page = 1, forceRefresh = fal
       throw failures[0]?.reason || new Error("概览生成失败。");
     }
 
+    reportProgress("analysis", chunks.length, chunks.length, {
+      taskId,
+      phase: "merging",
+      message: "正在合并概览…",
+    });
     const analysis = BILI_AI.mergeAnalyses(parts, totalDuration);
     if (!analysis.chapters.length && !analysis.keyQuotes.length) {
       return {
@@ -725,7 +901,7 @@ async function handleAnalyzeTranscript(bvidInput, { page = 1, forceRefresh = fal
 }
 
 // 时长相关变量按本块区间算，好让模型只覆盖这一段。
-async function analyzeChunk(chunk, chunkCount, common) {
+async function analyzeChunk(chunk, chunkCount, common, { signal } = {}) {
   const timing = BILI_AI.analysisTimingVariables(chunk.text, chunk.endSeconds);
   const rangeNote =
     chunkCount > 1
@@ -762,6 +938,7 @@ async function analyzeChunk(chunk, chunkCount, common) {
       floor: 2048,
     }),
     responseFormat: { type: "json_object" },
+    signal,
     messages: [
       { role: "system", content: systemPrompt },
       { role: "user", content: userPrompt },
@@ -834,7 +1011,11 @@ const REWRITE_TASKS = Object.freeze({
   },
 });
 
-async function handleSegmentRewrite(kind, bvidInput, { page = 1, segmentIds = [] } = {}) {
+async function handleSegmentRewrite(
+  kind,
+  bvidInput,
+  { page = 1, segmentIds = [], signal } = {},
+) {
   const task = REWRITE_TASKS[kind];
   const bvid = BILI_API.parseBvid(bvidInput);
   if (!bvid) {
@@ -865,6 +1046,7 @@ async function handleSegmentRewrite(kind, bvidInput, { page = 1, segmentIds = []
   }
 
   try {
+    throwIfTaskCanceled(signal);
     const { variables: extraVariables, align } = await task.prepare(transcript);
     const payload = {
       segments: todo.map((segment) => ({ id: segment.id, text: segment.text })),
@@ -887,6 +1069,7 @@ async function handleSegmentRewrite(kind, bvidInput, { page = 1, segmentIds = []
       // 两者都是照着原文做的，不是创作，温度越低越贴近原意。
       temperature: 0.2,
       responseFormat: { type: "json_object" },
+      signal,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -894,6 +1077,7 @@ async function handleSegmentRewrite(kind, bvidInput, { page = 1, segmentIds = []
     });
 
     const { accepted, rejected } = align(BILI_AI.parseLooseJson(text), todo);
+    throwIfTaskCanceled(signal);
     if (rejected.length) {
       debugLog(`[Bilibili Digest] ${task.label}丢弃的条目：`, rejected);
     }
@@ -1029,20 +1213,56 @@ async function polishNoteText(context, videoTitle) {
   }
 }
 
+// 用户主动优化时以当前正文为唯一输入：手动写下的观点不能被原始字幕重置。
+async function refineCurrentNoteText(currentText, videoTitle, { signal } = {}) {
+  const variables = {
+    videoTitle: videoTitle || "未知",
+    currentText,
+  };
+  const [systemPrompt, userPrompt] = await Promise.all([
+    loadPromptSection("note-refine.md", "系统提示词", variables),
+    loadPromptSection("note-refine.md", "用户提示词", variables),
+  ]);
+  const { text } = await requestAiCompletion({
+    maxTokens: BILI_AI.estimateOutputTokens(currentText.length, {
+      ratio: 1.2,
+      floor: 512,
+      ceiling: 4096,
+    }),
+    responseFormat: { type: "json_object" },
+    signal,
+    messages: [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userPrompt },
+    ],
+  });
+  const parsed = BILI_AI.parseLooseJson(text);
+  const refined = typeof parsed?.quote === "string" ? parsed.quote.trim() : "";
+  if (!refined) {
+    const error = new Error("模型没有返回有效的笔记正文，请重试。");
+    error.code = "EMPTY_AI_RESPONSE";
+    throw error;
+  }
+  return refined.slice(0, 3000);
+}
+
 // 后台润色完成后把正文换掉。笔记可能已被删除，map 不命中就什么都不做。
 async function polishNoteWhenReady(noteId, context, videoTitle) {
   const polished = await polishNoteText(context, videoTitle);
   await mutateNotes((notes) =>
-    notes.map((note) =>
-      note.id === noteId && note.pending
-        ? {
-            ...note,
-            text: polished || note.text,
-            pending: false,
-            updatedAt: Date.now(),
-          }
-        : note,
-    ),
+    notes.map((note) => {
+      if (note.id !== noteId || !note.pending) return note;
+      const changed = Boolean(polished && polished !== note.text);
+      return {
+        ...note,
+        text: polished || note.text,
+        pending: false,
+        updatedAt: changed ? Date.now() : note.updatedAt,
+        revision:
+          Math.max(1, Number(note.revision) || 1) + (changed ? 1 : 0),
+        contentSource: changed ? "ai" : note.contentSource,
+      };
+    }),
   );
   chrome.runtime.sendMessage({ action: "noteUpdated", noteId }).catch(() => {});
 }
@@ -1095,6 +1315,8 @@ async function handleSaveNote({ bvid: bvidInput, page = 1, timestamp, text: manu
     createdAt: Date.now(),
     updatedAt: Date.now(),
     learningId: BILI_LEARNING_STORE.learningId(bvid, pageNumber),
+    revision: 1,
+    contentSource: manualText ? "ai" : "raw",
   };
 
   // 同一时刻只该有一条笔记：金句重复点「存为笔记」、或同一秒连按 n，都会攒出
@@ -1188,10 +1410,152 @@ async function handleUpdateNote(noteId, input) {
   await mutateNotes((notes) =>
     notes.map((note) => {
       if (note.id !== noteId) return note;
-      updated = { ...note, text, pending: false, updatedAt: Date.now() };
+      const { aiDraft, ...current } = note;
+      updated = {
+        ...current,
+        text,
+        pending: false,
+        updatedAt: Date.now(),
+        revision: Math.max(1, Number(note.revision) || 1) + 1,
+        contentSource: "user",
+      };
       return updated;
     }),
   );
+  if (!updated) {
+    return {
+      success: false,
+      error: "NOTE_NOT_FOUND",
+      message: "这条笔记已经不存在了。",
+    };
+  }
+
+  chrome.runtime.sendMessage({ action: "noteUpdated", noteId }).catch(() => {});
+  return { success: true, note: updated };
+}
+
+async function handleGenerateNoteDraft(noteId, { signal, taskId } = {}) {
+  if (taskId) {
+    aiTasks.progress(taskId, {
+      phase: "generating",
+      message: "正在生成优化建议…",
+    });
+  }
+  await learningDataReady;
+  const stored = await chrome.storage.local.get(NOTES_STORAGE_KEY);
+  const notes = Array.isArray(stored[NOTES_STORAGE_KEY]) ? stored[NOTES_STORAGE_KEY] : [];
+  const snapshot = notes.find((note) => note.id === noteId);
+  if (!snapshot) {
+    return {
+      success: false,
+      error: "NOTE_NOT_FOUND",
+      message: "这条笔记已经不存在了。",
+    };
+  }
+
+  const currentText = String(snapshot.text || "").trim();
+  if (!currentText) {
+    return {
+      success: false,
+      error: "EMPTY_NOTE",
+      message: "笔记正文为空，先写下内容再使用 AI 优化。",
+    };
+  }
+  const basedOnRevision = Math.max(1, Number(snapshot.revision) || 1);
+  const draftText = await refineCurrentNoteText(currentText, snapshot.videoTitle, { signal });
+  throwIfTaskCanceled(signal);
+  let updated = null;
+  await mutateNotes((currentNotes) =>
+    currentNotes.map((note) => {
+      if (note.id !== noteId) return note;
+      const currentRevision = Math.max(1, Number(note.revision) || 1);
+      updated = {
+        ...note,
+        aiDraft: {
+          text: draftText,
+          basedOnRevision,
+          createdAt: Date.now(),
+          conflict: currentRevision !== basedOnRevision,
+        },
+      };
+      return updated;
+    }),
+  );
+  if (!updated) {
+    return {
+      success: false,
+      error: "NOTE_NOT_FOUND",
+      message: "生成期间这条笔记已被删除。",
+    };
+  }
+
+  chrome.runtime.sendMessage({ action: "noteUpdated", noteId }).catch(() => {});
+  return { success: true, note: updated };
+}
+
+async function handleResolveNoteDraft(noteId, mode, expectedRevision) {
+  if (!["replace", "append", "discard"].includes(mode)) {
+    return {
+      success: false,
+      error: "INVALID_DRAFT_ACTION",
+      message: "不支持这个候选处理方式。",
+    };
+  }
+
+  let updated = null;
+  let failure = null;
+  await mutateNotes((notes) =>
+    notes.map((note) => {
+      if (note.id !== noteId) return note;
+      const revision = Math.max(1, Number(note.revision) || 1);
+      if (!note.aiDraft?.text) {
+        failure = {
+          success: false,
+          error: "NOTE_DRAFT_NOT_FOUND",
+          message: "AI 候选已经不存在了，请重新生成。",
+        };
+        return note;
+      }
+      if (mode === "discard") {
+        const { aiDraft, ...current } = note;
+        updated = current;
+        return updated;
+      }
+      if (revision !== Number(expectedRevision)) {
+        failure = {
+          success: false,
+          error: "NOTE_CONFLICT",
+          message: "笔记内容已经发生变化，请确认最新内容后再操作。",
+          note,
+        };
+        return note;
+      }
+
+      const { aiDraft, ...current } = note;
+      const text =
+        mode === "append"
+          ? `${String(note.text || "").trim()}\n\n${aiDraft.text}`.trim()
+          : aiDraft.text;
+      if (text.length > 3000) {
+        failure = {
+          success: false,
+          error: "NOTE_TOO_LONG",
+          message: "追加后超过 3000 个字符，请先精简当前笔记。",
+        };
+        return note;
+      }
+      updated = {
+        ...current,
+        text,
+        pending: false,
+        updatedAt: Date.now(),
+        revision: revision + 1,
+        contentSource: mode === "replace" ? "ai" : "user",
+      };
+      return updated;
+    }),
+  );
+  if (failure) return failure;
   if (!updated) {
     return {
       success: false,

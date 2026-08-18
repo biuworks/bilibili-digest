@@ -50,6 +50,10 @@ const PROMPTS = {
     targetText: "目标",
     afterText: "后文",
   },
+  "note-refine.md": {
+    videoTitle: "测试标题",
+    currentText: "用户当前笔记",
+  },
 };
 
 // 形如 {videoTitle} 的占位符。提示词里的 JSON 示例都以引号开头（{"chapters"），不会误伤。

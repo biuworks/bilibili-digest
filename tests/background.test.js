@@ -7,6 +7,10 @@ const vm = require("node:vm");
 const LEARNING_STORE = require("../lib/learning-store.js");
 const CONCURRENCY = require("../lib/concurrency.js");
 const TRANSCRIPT = require("../lib/transcript.js");
+const AI = require("../lib/ai.js");
+const SETTINGS = require("../settings.js");
+const AI_PROVIDER = require("../lib/ai-provider.js");
+const TASKS = require("../lib/task-manager.js");
 
 const ROOT = path.join(__dirname, "..");
 const BVID = "BV1xx411c7mD";
@@ -34,14 +38,53 @@ function memoryStorage(initial = {}) {
   };
 }
 
-function createBackground({ initial = {}, cached = null, storage: suppliedStorage } = {}) {
+function createBackground({
+  initial = {},
+  cached = null,
+  storage: suppliedStorage,
+  aiReply = null,
+} = {}) {
   const storage = suppliedStorage || memoryStorage(initial);
+  if (aiReply !== null) {
+    storage.data[SETTINGS.STORAGE_KEY] = {
+      presetId: "custom",
+      protocol: SETTINGS.PROTOCOLS.OPENAI,
+      aiApiKey: "test-key",
+      aiBaseUrl: "https://example.com/v1",
+      aiModel: "test-model",
+      aiConcurrency: 1,
+      aiTimeoutSeconds: 30,
+    };
+  }
   let messageListener;
+  const broadcasts = [];
   const context = {
     console,
     setTimeout,
     clearTimeout,
-    fetch: async () => {
+    AbortController,
+    TextDecoder,
+    fetch: async (url, options = {}) => {
+      const target = String(url);
+      if (target.startsWith("prompts/")) {
+        const file = path.join(ROOT, target);
+        return {
+          ok: fs.existsSync(file),
+          text: async () => fs.readFileSync(file, "utf8"),
+        };
+      }
+      if (aiReply !== null) {
+        const reply =
+          typeof aiReply === "function" ? await aiReply({ url, options }) : String(aiReply);
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({
+              choices: [{ message: { content: JSON.stringify({ quote: reply }) } }],
+            }),
+        };
+      }
       throw new Error("测试不应访问网络");
     },
     importScripts() {},
@@ -57,8 +100,11 @@ function createBackground({ initial = {}, cached = null, storage: suppliedStorag
             messageListener = listener;
           },
         },
-        sendMessage: async () => {},
+        sendMessage: async (message) => {
+          broadcasts.push(message);
+        },
       },
+      permissions: { contains: async () => true },
     },
     BILI_LEARNING_STORE: LEARNING_STORE,
     BILI_CONCURRENCY: CONCURRENCY,
@@ -73,13 +119,10 @@ function createBackground({ initial = {}, cached = null, storage: suppliedStorag
         `https://www.bilibili.com/video/${bvid}?p=${page}&t=${seconds}`,
       fetchVideoInfo: async () => ({ title: "标题", owner: { name: "UP 主" } }),
     },
-    BILI_SETTINGS: {
-      STORAGE_KEY: "bili_digest_settings",
-      normalize: (value) => value || {},
-      validate: () => ({ ok: false }),
-    },
-    BILI_AI: {},
-    BILI_AI_PROVIDER: {},
+    BILI_SETTINGS: SETTINGS,
+    BILI_AI: AI,
+    BILI_AI_PROVIDER: AI_PROVIDER,
+    BILI_TASKS: TASKS,
   };
   context.globalThis = context;
   vm.createContext(context);
@@ -95,8 +138,92 @@ function createBackground({ initial = {}, cached = null, storage: suppliedStorag
     });
   }
 
-  return { storage, send };
+  return { storage, send, broadcasts };
 }
+
+test("后台任务协议拒绝同目标重复任务，并支持查询与取消", async () => {
+  const ctx = createBackground();
+  const first = await ctx.send({
+    action: "startAiTask",
+    taskId: "analysis-1",
+    kind: "analysis",
+    bvid: BVID,
+    page: 1,
+  });
+  const repeated = await ctx.send({
+    action: "startAiTask",
+    taskId: "analysis-2",
+    kind: "analysis",
+    bvid: BVID,
+    page: 1,
+  });
+
+  assert.equal(first.success, true);
+  assert.equal(repeated.error, "TASK_ALREADY_RUNNING");
+  assert.equal(repeated.task.id, "analysis-1");
+
+  const active = await ctx.send({ action: "getAiTasks" });
+  assert.equal(active.tasks.length, 1);
+  assert.equal(active.tasks[0].state, "running");
+
+  const canceled = await ctx.send({ action: "cancelAiTask", taskId: "analysis-1" });
+  assert.equal(canceled.success, true);
+  assert.equal(canceled.task.state, "canceled");
+  assert.ok(
+    ctx.broadcasts.some(
+      (message) => message.action === "aiTaskChanged" && message.task.state === "canceled",
+    ),
+  );
+});
+
+test("取消笔记优化会中止真实模型请求，且不会保存半成品候选", async () => {
+  let markStarted;
+  const started = new Promise((resolve) => {
+    markStarted = resolve;
+  });
+  const ctx = createBackground({
+    initial: {
+      [LEARNING_STORE.NOTES_KEY]: [
+        {
+          id: "note_1",
+          bvid: BVID,
+          text: "需要优化的正文",
+          createdAt: 1000,
+          revision: 1,
+        },
+      ],
+    },
+    aiReply: ({ options }) =>
+      new Promise((resolve, reject) => {
+        markStarted();
+        options.signal.addEventListener("abort", () => {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          reject(error);
+        });
+      }),
+  });
+
+  await ctx.send({
+    action: "startAiTask",
+    taskId: "note-task-1",
+    kind: "note-refine",
+    noteId: "note_1",
+  });
+  const generating = ctx.send({
+    action: "generateNoteDraft",
+    taskId: "note-task-1",
+    noteId: "note_1",
+  });
+  await started;
+  await ctx.send({ action: "cancelAiTask", taskId: "note-task-1" });
+  const result = await generating;
+
+  assert.equal(result.success, false);
+  assert.equal(result.error, "TASK_CANCELED");
+  assert.equal(ctx.storage.data[LEARNING_STORE.NOTES_KEY][0].aiDraft, undefined);
+  assert.deepEqual((await ctx.send({ action: "getAiTasks" })).tasks, []);
+});
 
 test("首次读取笔记前完成旧数据迁移", async () => {
   const ctx = createBackground({
@@ -109,7 +236,7 @@ test("首次读取笔记前完成旧数据迁移", async () => {
 
   const result = await ctx.send({ action: "getNotes" });
 
-  assert.equal(result.success, true);
+  assert.equal(result.success, true, JSON.stringify(result));
   assert.equal(result.notes[0].page, 1);
   assert.equal(result.notes[0].updatedAt, 1000);
   assert.equal(result.notes[0].learningId, `${BVID}:p1`);
@@ -139,7 +266,16 @@ test("笔记正文可以更新，并记录更新时间", async () => {
   const ctx = createBackground({
     initial: {
       [LEARNING_STORE.NOTES_KEY]: [
-        { id: "note_1", bvid: BVID, page: 1, text: "旧正文", createdAt: 1000 },
+        {
+          id: "note_1",
+          bvid: BVID,
+          page: 1,
+          text: "旧正文",
+          createdAt: 1000,
+          revision: 4,
+          contentSource: "ai",
+          aiDraft: { text: "过期候选", basedOnRevision: 4 },
+        },
       ],
     },
   });
@@ -152,8 +288,212 @@ test("笔记正文可以更新，并记录更新时间", async () => {
 
   assert.equal(result.success, true);
   assert.equal(result.note.text, "修改后的正文");
+  assert.equal(result.note.revision, 5);
+  assert.equal(result.note.contentSource, "user");
+  assert.equal(result.note.aiDraft, undefined);
   assert.ok(result.note.updatedAt >= result.note.createdAt);
   assert.equal(ctx.storage.data[LEARNING_STORE.NOTES_KEY][0].text, "修改后的正文");
+});
+
+test("AI 优化只生成候选，不直接覆盖当前笔记", async () => {
+  const ctx = createBackground({
+    initial: {
+      [LEARNING_STORE.NOTES_KEY]: [
+        {
+          id: "note_1",
+          bvid: BVID,
+          page: 1,
+          text: "用户修改过的正文",
+          videoTitle: "测试视频",
+          createdAt: 1000,
+          revision: 3,
+          contentSource: "user",
+        },
+      ],
+    },
+    aiReply: "AI 优化后的候选正文。",
+  });
+
+  const result = await ctx.send({ action: "generateNoteDraft", noteId: "note_1" });
+
+  assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.note.text, "用户修改过的正文");
+  assert.equal(result.note.revision, 3);
+  assert.equal(result.note.aiDraft.text, "AI 优化后的候选正文。");
+  assert.equal(result.note.aiDraft.basedOnRevision, 3);
+  assert.equal(result.note.aiDraft.conflict, false);
+});
+
+test("空笔记不会发起 AI 优化请求", async () => {
+  let requested = false;
+  const ctx = createBackground({
+    initial: {
+      [LEARNING_STORE.NOTES_KEY]: [
+        { id: "note_1", bvid: BVID, text: "  ", createdAt: 1000, revision: 1 },
+      ],
+    },
+    aiReply: () => {
+      requested = true;
+      return "不应生成";
+    },
+  });
+
+  const result = await ctx.send({ action: "generateNoteDraft", noteId: "note_1" });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error, "EMPTY_NOTE");
+  assert.equal(requested, false);
+});
+
+test("AI 生成期间发生手动编辑时，候选标记冲突且不覆盖新正文", async () => {
+  let markStarted;
+  let releaseReply;
+  const started = new Promise((resolve) => {
+    markStarted = resolve;
+  });
+  const ctx = createBackground({
+    initial: {
+      [LEARNING_STORE.NOTES_KEY]: [
+        {
+          id: "note_1",
+          bvid: BVID,
+          text: "发起时的正文",
+          createdAt: 1000,
+          revision: 1,
+          contentSource: "user",
+        },
+      ],
+    },
+    aiReply: () =>
+      new Promise((resolve) => {
+        releaseReply = resolve;
+        markStarted();
+      }),
+  });
+
+  const generating = ctx.send({ action: "generateNoteDraft", noteId: "note_1" });
+  await started;
+  await ctx.send({ action: "updateNote", noteId: "note_1", text: "期间手动修改" });
+  releaseReply("基于旧正文生成的候选");
+  const result = await generating;
+
+  assert.equal(result.note.text, "期间手动修改");
+  assert.equal(result.note.revision, 2);
+  assert.equal(result.note.aiDraft.basedOnRevision, 1);
+  assert.equal(result.note.aiDraft.conflict, true);
+});
+
+test("用户明确确认后才用 AI 候选替换正文", async () => {
+  const ctx = createBackground({
+    initial: {
+      [LEARNING_STORE.NOTES_KEY]: [
+        {
+          id: "note_1",
+          bvid: BVID,
+          text: "当前正文",
+          createdAt: 1000,
+          revision: 3,
+          contentSource: "user",
+          aiDraft: {
+            text: "AI 候选",
+            basedOnRevision: 3,
+            createdAt: 2000,
+            conflict: false,
+          },
+        },
+      ],
+    },
+  });
+
+  const result = await ctx.send({
+    action: "resolveNoteDraft",
+    noteId: "note_1",
+    mode: "replace",
+    expectedRevision: 3,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.note.text, "AI 候选");
+  assert.equal(result.note.revision, 4);
+  assert.equal(result.note.contentSource, "ai");
+  assert.equal(result.note.aiDraft, undefined);
+});
+
+test("AI 候选可以追加到当前笔记，也可以直接丢弃", async () => {
+  const note = {
+    id: "note_1",
+    bvid: BVID,
+    text: "当前正文",
+    createdAt: 1000,
+    revision: 2,
+    contentSource: "user",
+    aiDraft: { text: "补充内容", basedOnRevision: 2, createdAt: 2000 },
+  };
+  const appended = createBackground({
+    initial: { [LEARNING_STORE.NOTES_KEY]: [note] },
+  });
+
+  const appendResult = await appended.send({
+    action: "resolveNoteDraft",
+    noteId: "note_1",
+    mode: "append",
+    expectedRevision: 2,
+  });
+
+  assert.equal(appendResult.success, true);
+  assert.equal(appendResult.note.text, "当前正文\n\n补充内容");
+  assert.equal(appendResult.note.revision, 3);
+  assert.equal(appendResult.note.contentSource, "user");
+
+  const discarded = createBackground({
+    initial: { [LEARNING_STORE.NOTES_KEY]: [note] },
+  });
+  const discardResult = await discarded.send({
+    action: "resolveNoteDraft",
+    noteId: "note_1",
+    mode: "discard",
+    expectedRevision: 2,
+  });
+
+  assert.equal(discardResult.success, true);
+  assert.equal(discardResult.note.text, "当前正文");
+  assert.equal(discardResult.note.revision, 2);
+  assert.equal(discardResult.note.aiDraft, undefined);
+});
+
+test("采用候选前正文又被修改时返回冲突，不覆盖任何内容", async () => {
+  const ctx = createBackground({
+    initial: {
+      [LEARNING_STORE.NOTES_KEY]: [
+        {
+          id: "note_1",
+          bvid: BVID,
+          text: "更新后的正文",
+          createdAt: 1000,
+          revision: 4,
+          contentSource: "user",
+          aiDraft: {
+            text: "旧候选",
+            basedOnRevision: 3,
+            createdAt: 2000,
+            conflict: true,
+          },
+        },
+      ],
+    },
+  });
+
+  const result = await ctx.send({
+    action: "resolveNoteDraft",
+    noteId: "note_1",
+    mode: "replace",
+    expectedRevision: 3,
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error, "NOTE_CONFLICT");
+  assert.equal(ctx.storage.data[LEARNING_STORE.NOTES_KEY][0].text, "更新后的正文");
+  assert.equal(ctx.storage.data[LEARNING_STORE.NOTES_KEY][0].aiDraft.text, "旧候选");
 });
 
 test("空正文和不存在的笔记不会被写入", async () => {

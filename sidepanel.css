@@ -572,6 +572,7 @@ button {
   -webkit-backdrop-filter: blur(10px);
   backdrop-filter: blur(10px);
   border-bottom: 1px solid var(--border);
+  user-select: none;
 }
 
 .panel-toolbar-actions {
@@ -806,6 +807,96 @@ button {
   margin: 0;
 }
 
+.task-stop-btn {
+  flex: 0 0 auto;
+  color: var(--accent-strong);
+}
+
+.action-menu {
+  position: relative;
+}
+
+.action-menu > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.action-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.action-menu[open] > summary {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-strong);
+}
+
+.action-menu > summary::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  margin: -2px 0 0 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+
+.action-menu-popover {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 112px;
+  padding: 5px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+}
+
+.action-menu-popover button {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  color: var(--text);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.action-menu-popover button:hover {
+  background: var(--accent-soft);
+}
+
+.action-menu-options .segmented-btn {
+  display: block;
+  width: 100%;
+  padding: 7px 9px;
+  color: var(--text);
+  text-align: left;
+  border-radius: 6px;
+}
+
+.action-menu-options .segmented-btn.active {
+  color: var(--accent-strong);
+  background: var(--accent-soft);
+  box-shadow: none;
+}
+
+.action-menu-options .segmented-btn.active::after {
+  content: "✓";
+  float: right;
+  font-weight: 600;
+}
+
+.action-menu-divider {
+  height: 1px;
+  margin: 4px 3px;
+  background: var(--border);
+}
+
 .muted-small {
   font-size: 12px;
 }
@@ -976,6 +1067,47 @@ button {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 8px;
+}
+
+.note-ai-draft {
+  margin-top: 10px;
+  padding: 11px 12px;
+  background: var(--accent-soft);
+  border: 1px solid rgba(251, 114, 153, 0.24);
+  border-radius: var(--radius-sm);
+}
+
+.note-ai-draft-head {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+
+.note-ai-draft-text {
+  margin: 7px 0 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.note-ai-draft-warning {
+  margin: 7px 0 0;
+  padding: 7px 9px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--danger);
+  background: var(--danger-soft);
+  border-radius: 6px;
+}
+
+.note-ai-draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 10px;
 }
 
 /* 时间戳做成粉色药丸，一眼看出能点——原来是个 span，可点但没有任何提示 */

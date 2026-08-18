@@ -51,7 +51,33 @@ test("旧版裸数组笔记会原地迁移，并补齐可持续迭代的字段",
     page: 1,
     updatedAt: 1000,
     learningId: "BV1xx411c7mD:p1",
+    revision: 1,
+    contentSource: "legacy",
   });
+});
+
+test("v1 笔记升级到 v2 后具备 revision 与内容来源", async () => {
+  const storage = memoryStorage({
+    [STORE.META_KEY]: { schemaVersion: 1, migratedAt: 1000 },
+    [STORE.NOTES_KEY]: [
+      {
+        id: "note_v1",
+        bvid: "BV1xx411c7mD",
+        page: 1,
+        text: "用户已有正文",
+        rawText: "原始字幕",
+        createdAt: 1000,
+        updatedAt: 1500,
+      },
+    ],
+  });
+
+  await STORE.ensureMigrated({ storage, now: 2000 });
+
+  assert.equal(STORE.SCHEMA_VERSION, 2);
+  assert.equal(storage.data[STORE.META_KEY].schemaVersion, 2);
+  assert.equal(storage.data[STORE.NOTES_KEY][0].revision, 1);
+  assert.equal(storage.data[STORE.NOTES_KEY][0].contentSource, "legacy");
 });
 
 test("迁移可以重复执行，不会改写已迁移数据", async () => {
@@ -118,4 +144,98 @@ test("概览学习记录按 BV 号和分 P 长期保存，互不覆盖", async (
     analysis,
     updatedAt: 3000,
   });
+});
+
+const NOTE_A = {
+  id: "note_a",
+  bvid: "BV1xx411c7mD",
+  page: 1,
+  learningId: "BV1xx411c7mD:p1",
+  videoTitle: "第一个视频",
+  ownerName: "UP 甲",
+  timestamp: "1:05",
+  timestampSeconds: 65,
+  timestampedUrl: "https://www.bilibili.com/video/BV1xx411c7mD?t=65",
+  text: "较早的一条",
+  createdAt: 1000,
+  aiDraft: { text: "未确认的草稿" },
+};
+
+const NOTE_B = {
+  id: "note_b",
+  bvid: "BV1xx411c7mD",
+  page: 1,
+  learningId: "BV1xx411c7mD:p1",
+  videoTitle: "第一个视频",
+  ownerName: "UP 甲",
+  timestamp: "0:12",
+  timestampSeconds: 12,
+  timestampedUrl: "https://www.bilibili.com/video/BV1xx411c7mD?t=12",
+  text: "第一行\n第二行",
+  createdAt: 1500,
+};
+
+const NOTE_C = {
+  id: "note_c",
+  bvid: "BV1yy411c7mD",
+  page: 2,
+  learningId: "BV1yy411c7mD:p2",
+  videoTitle: "第二个视频",
+  ownerName: "UP 乙",
+  timestamp: "2:00",
+  timestampSeconds: 120,
+  timestampedUrl: "https://www.bilibili.com/video/BV1yy411c7mD?p=2&t=120",
+  text: "另一部的笔记",
+  createdAt: 3000,
+};
+
+test("空笔记列表导出为空字符串", () => {
+  assert.equal(STORE.notesAsMarkdown([]), "");
+  assert.equal(STORE.notesAsMarkdown(null, { grouped: true }), "");
+});
+
+test("单视频导出按时间戳升序，且不含 AI 草稿", () => {
+  const markdown = STORE.notesAsMarkdown([NOTE_A, NOTE_B]);
+  assert.equal(
+    markdown,
+    [
+      "# 第一个视频",
+      "",
+      "UP 甲",
+      "https://www.bilibili.com/video/BV1xx411c7mD",
+      "",
+      "- [0:12](https://www.bilibili.com/video/BV1xx411c7mD?t=12) 第一行",
+      "  第二行",
+      "- [1:05](https://www.bilibili.com/video/BV1xx411c7mD?t=65) 较早的一条",
+      "",
+    ].join("\n"),
+  );
+  assert.doesNotMatch(markdown, /未确认的草稿/);
+});
+
+test("全部分组时组内升序、组之间按最新笔记倒序", () => {
+  const markdown = STORE.notesAsMarkdown([NOTE_A, NOTE_B, NOTE_C], {
+    grouped: true,
+  });
+  assert.equal(
+    markdown,
+    [
+      "# 第二个视频",
+      "",
+      "UP 乙 · P2",
+      "https://www.bilibili.com/video/BV1yy411c7mD?p=2",
+      "",
+      "- [2:00](https://www.bilibili.com/video/BV1yy411c7mD?p=2&t=120) 另一部的笔记",
+      "",
+      "# 第一个视频",
+      "",
+      "UP 甲",
+      "https://www.bilibili.com/video/BV1xx411c7mD",
+      "",
+      "- [0:12](https://www.bilibili.com/video/BV1xx411c7mD?t=12) 第一行",
+      "  第二行",
+      "- [1:05](https://www.bilibili.com/video/BV1xx411c7mD?t=65) 较早的一条",
+      "",
+    ].join("\n"),
+  );
 });

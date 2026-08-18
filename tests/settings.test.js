@@ -369,6 +369,44 @@ test("小数被向下取整", () => {
   assert.equal(settings.normalize({ aiConcurrency: 3.9 }).aiConcurrency, 3);
 });
 
+test("概览分块模式默认自动，并只接受自动、较短、较长三种值", () => {
+  assert.equal(settings.normalize({}).analysisChunkMode, "auto");
+  assert.equal(settings.normalize({ analysisChunkMode: "short" }).analysisChunkMode, "short");
+  assert.equal(settings.normalize({ analysisChunkMode: "long" }).analysisChunkMode, "long");
+  assert.equal(settings.normalize({ analysisChunkMode: "unknown" }).analysisChunkMode, "auto");
+});
+
+test("概览分块模式映射成稳定的字符上限", () => {
+  assert.deepEqual(settings.analysisChunkOptions({ analysisChunkMode: "auto" }), {
+    maxChars: 6000,
+    singleChars: 8000,
+    overlapChars: 400,
+  });
+  assert.deepEqual(settings.analysisChunkOptions({ analysisChunkMode: "short" }), {
+    maxChars: 3500,
+    singleChars: 3500,
+    overlapChars: 400,
+  });
+  assert.deepEqual(settings.analysisChunkOptions({ analysisChunkMode: "long" }), {
+    maxChars: 12000,
+    singleChars: 14000,
+    overlapChars: 400,
+  });
+});
+
+test("分块重叠字符数可自定义，并被限制在 0 到 2000", () => {
+  assert.equal(settings.normalize({}).analysisOverlapChars, 400);
+  assert.equal(settings.normalize({ analysisOverlapChars: 900 }).analysisOverlapChars, 900);
+  assert.equal(settings.normalize({ analysisOverlapChars: -1 }).analysisOverlapChars, 0);
+  assert.equal(settings.normalize({ analysisOverlapChars: 99999 }).analysisOverlapChars, 2000);
+  assert.equal(settings.normalize({ analysisOverlapChars: "bad" }).analysisOverlapChars, 400);
+  assert.equal(
+    settings.analysisChunkOptions({ analysisChunkMode: "short", analysisOverlapChars: 750 })
+      .overlapChars,
+    750,
+  );
+});
+
 // ============================================================
 // 预设
 // ============================================================

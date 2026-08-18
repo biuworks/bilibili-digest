@@ -48,12 +48,19 @@ function createElement(tag = "div") {
       this.children.push(node);
       return node;
     },
+    contains(node) {
+      return this === node || this.children.some((child) => child?.contains?.(node));
+    },
+    getBoundingClientRect() {
+      return { left: 0, top: 0, right: 500, bottom: 500, width: 500, height: 500 };
+    },
     remove() {},
     scrolled: false,
     scrollIntoView() {
       this.scrolled = true;
     },
     focus() {},
+    click() {},
     addEventListener(type, listener) {
       if (!listeners.has(type)) listeners.set(type, []);
       listeners.get(type).push(listener);
@@ -85,19 +92,29 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
   const sent = [];
   const openedTabs = [];
   const seeks = [];
+  const downloads = [];
   const context = {
     console,
     setTimeout,
     clearTimeout,
     setInterval,
     CSS: { escape: (value) => value },
-    window: { getSelection: () => null },
+    window: { getSelection: () => null, innerWidth: 500 },
     document: {
       getElementById: byId,
-      createElement: (tag) => createElement(tag),
+      createElement: (tag) => {
+        const node = createElement(tag);
+        if (tag === "a") {
+          node.click = () => {
+            downloads.push({ href: node.href, download: node.download });
+          };
+        }
+        return node;
+      },
       createElementNS: (namespace, tag) => createElement(tag),
       createDocumentFragment: () => createElement("#fragment"),
       querySelectorAll: () => [],
+      querySelector: (selector) => selector === ".content" ? byId("content") : null,
       addEventListener() {},
     },
     navigator: { clipboard: { writeText: async () => {} } },
@@ -136,7 +153,10 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
     BILI_TRANSCRIPT: require("../lib/transcript.js"),
     BILI_AI: require("../lib/ai.js"),
     BILI_CONCURRENCY: require("../lib/concurrency.js"),
+    BILI_LEARNING_STORE: require("../lib/learning-store.js"),
     BILI_SETTINGS: require("../settings.js"),
+    Blob,
+    URL,
   };
   context.globalThis = context;
 
@@ -145,7 +165,7 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes };`,
+    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, renderNotes };`,
     context,
   );
 
@@ -156,6 +176,8 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
     sent,
     openedTabs,
     seeks,
+    downloads,
+    window: context.window,
   };
 }
 
@@ -352,6 +374,98 @@ test("生成成功后立即展示结果，并收起加载态", async () => {
   assert.equal(ctx.el("overviewLoading").hidden, true);
   assert.equal(ctx.el("overviewResult").hidden, false);
   assert.deepEqual(ctx.state.analysis, ANALYSIS);
+});
+
+test("概览生成可取消，重复点击不会启动第二个任务", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = "BV1xx411c7mD";
+  await ctx.loadTranscript();
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const original = ctx.chrome.runtime.sendMessage;
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    ctx.sent.push(message);
+    if (message.action === "startAiTask") {
+      return { success: true, task: { id: message.taskId, state: "running" } };
+    }
+    if (message.action === "analyzeTranscript") {
+      await gate;
+      return { success: false, error: "TASK_CANCELED", message: "任务已取消。" };
+    }
+    if (message.action === "cancelAiTask") {
+      release();
+      return { success: true, task: { id: message.taskId, state: "canceled" } };
+    }
+    return original(message);
+  };
+
+  const pending = ctx.analyze();
+  await new Promise((resolve) => setImmediate(resolve));
+  await ctx.analyze();
+  await ctx.cancelAnalysis();
+  await pending;
+
+  assert.equal(ctx.sent.filter((message) => message.action === "startAiTask").length, 1);
+  assert.equal(ctx.sent.filter((message) => message.action === "analyzeTranscript").length, 1);
+  assert.equal(ctx.sent.filter((message) => message.action === "cancelAiTask").length, 1);
+  assert.match(ctx.el("overviewEmpty").querySelector(".state-title").textContent, /取消/);
+});
+
+test("取消重新生成时恢复上一次概览，不让已有结果消失", async () => {
+  const ctx = createContext({ transcript: transcriptResult({ analysis: ANALYSIS }) });
+  ctx.state.bvid = "BV1xx411c7mD";
+  await ctx.loadTranscript();
+  const original = ctx.chrome.runtime.sendMessage;
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    if (message.action === "startAiTask") return { success: true };
+    if (message.action === "analyzeTranscript") {
+      return { success: false, error: "TASK_CANCELED", message: "任务已取消。" };
+    }
+    return original(message);
+  };
+
+  await ctx.analyze({ force: true });
+
+  assert.deepEqual(ctx.state.analysis, ANALYSIS);
+  assert.equal(ctx.el("overviewResult").hidden, false);
+  assert.equal(ctx.el("overviewEmpty").hidden, true);
+  assert.match(ctx.el("overviewMeta").textContent, /保留上次结果/);
+});
+
+test("侧边栏只保留顶部全局设置入口，不在功能菜单重复跳转", () => {
+  const html = fs.readFileSync(path.join(ROOT, "sidepanel.html"), "utf8");
+  assert.match(html, /id=["']cancelAnalysisBtn["']/);
+  assert.match(html, /id=["']rewriteStopBtn["']/);
+  assert.match(html, /id=["']optionsBtn["']/);
+  assert.match(html, /id=["']reanalyzeBtn["']/);
+  assert.doesNotMatch(html, /id=["']overviewGenerateMenu["']/);
+  assert.doesNotMatch(html, /id=["']overviewSettingsBtn["']/);
+  assert.doesNotMatch(html, /id=["']transcriptSettingsBtn["']/);
+  assert.doesNotMatch(html, />\s*(?:生成设置|处理设置)\s*</);
+});
+
+test("概览工具栏的文字选区不会触发划词解释浮层", () => {
+  const ctx = createContext({ transcript: transcriptResult({ analysis: ANALYSIS }) });
+  const selectedNode = createElement("span");
+  selectedNode.parentElement = { closest: () => ctx.el("overviewPanel") };
+  ctx.state.tab = "overview";
+  ctx.el("explainTooltip").hidden = true;
+  ctx.window.getSelection = () => ({
+    isCollapsed: false,
+    rangeCount: 1,
+    anchorNode: selectedNode,
+    toString: () => "3 章节 · 4 金句",
+    getRangeAt: () => ({
+      cloneRange() { return this; },
+      getBoundingClientRect: () => ({ left: 20, top: 20, width: 120, height: 20 }),
+    }),
+  });
+
+  ctx.onSelectionChange();
+
+  assert.equal(ctx.el("explainTooltip").hidden, true);
 });
 
 // ============================================================
@@ -567,6 +681,43 @@ test("偶发失败的批次会自动补一轮，不用用户手点", async () =>
     !ctx.el("segmentCount").textContent.includes("批失败"),
     "补齐之后不该再让用户手点补齐",
   );
+});
+
+test("字幕改写可停止，取消后不再继续启动新批次", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = NOTE.bvid;
+  await ctx.loadTranscript();
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    ctx.sent.push(message);
+    if (message.action === "startAiTask") {
+      return { success: true, task: { id: message.taskId, state: "running" } };
+    }
+    if (message.action === "translateSegments") {
+      await gate;
+      return { success: false, error: "TASK_CANCELED", message: "任务已取消。" };
+    }
+    if (message.action === "cancelAiTask") {
+      release();
+      return { success: true, task: { id: message.taskId, state: "canceled" } };
+    }
+    if (message.action === "finishAiTask") return { success: true };
+    if (message.action === "updateAiTaskProgress") return { success: true };
+    return { success: true };
+  };
+
+  const pending = ctx.setTranscriptMode("translated");
+  await new Promise((resolve) => setImmediate(resolve));
+  await ctx.cancelRewrite();
+  await pending;
+
+  assert.equal(ctx.sent.filter((message) => message.action === "startAiTask").length, 1);
+  assert.equal(ctx.sent.filter((message) => message.action === "translateSegments").length, 1);
+  assert.equal(ctx.sent.filter((message) => message.action === "cancelAiTask").length, 1);
+  assert.equal(ctx.state.transcriptMode, "original");
 });
 
 test("划词解释能在顺句后的文字里找到上下文", async () => {
@@ -866,6 +1017,165 @@ test("笔记可以在卡片内编辑并保存", async () => {
   assert.equal(editor.hidden, true);
 });
 
+test("AI 优化先展示候选，用户确认后才替换笔记", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = NOTE.bvid;
+  const sent = [];
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    sent.push(message);
+    if (message.action === "generateNoteDraft") {
+      return {
+        success: true,
+        note: {
+          ...NOTE,
+          revision: 3,
+          contentSource: "user",
+          aiDraft: {
+            text: "AI 优化候选",
+            basedOnRevision: 3,
+            conflict: false,
+          },
+        },
+      };
+    }
+    if (message.action === "resolveNoteDraft") {
+      return {
+        success: true,
+        note: {
+          ...NOTE,
+          text: "AI 优化候选",
+          revision: 4,
+          contentSource: "ai",
+        },
+      };
+    }
+    return { success: true };
+  };
+
+  const card = ctx.renderNoteCard({
+    ...NOTE,
+    revision: 3,
+    contentSource: "user",
+  });
+  await findButtonByLabel(card, "AI 优化").dispatch("click");
+
+  assert.equal(sent[0].action, "startAiTask");
+  assert.equal(sent[0].kind, "note-refine");
+  assert.equal(sent[1].action, "generateNoteDraft");
+  assert.equal(sent[1].taskId, sent[0].taskId);
+  assert.equal(findByClass(card, "entry-text").textContent, NOTE.text);
+  assert.equal(findByClass(card, "note-ai-draft").hidden, false);
+  assert.equal(findByClass(card, "note-ai-draft-text").textContent, "AI 优化候选");
+
+  await findButtonByLabel(card, "替换当前").dispatch("click");
+
+  assert.equal(sent[2].action, "resolveNoteDraft");
+  assert.equal(sent[2].mode, "replace");
+  assert.equal(sent[2].expectedRevision, 3);
+  assert.equal(findByClass(card, "entry-text").textContent, "AI 优化候选");
+  assert.equal(findByClass(card, "note-ai-draft").hidden, true);
+});
+
+test("AI 笔记优化按钮运行时变成停止，重复点击会取消而不是重复生成", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const sent = [];
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    sent.push(message);
+    if (message.action === "startAiTask") return { success: true };
+    if (message.action === "generateNoteDraft") {
+      await gate;
+      return { success: false, error: "TASK_CANCELED", message: "任务已取消。" };
+    }
+    if (message.action === "cancelAiTask") {
+      release();
+      return { success: true };
+    }
+    return { success: true };
+  };
+
+  const card = ctx.renderNoteCard({ ...NOTE, revision: 2 });
+  const optimize = findButtonByLabel(card, "AI 优化");
+  const pending = optimize.dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+  await optimize.dispatch("click");
+  await pending;
+
+  assert.equal(sent.filter((message) => message.action === "generateNoteDraft").length, 1);
+  assert.equal(sent.filter((message) => message.action === "cancelAiTask").length, 1);
+  assert.match(noticeOf(card).textContent, /已取消/);
+  assert.equal(findByClass(card, "entry-text").textContent, NOTE.text);
+});
+
+test("基于旧版本生成的 AI 候选会明确提示冲突", () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  const card = ctx.renderNoteCard({
+    ...NOTE,
+    revision: 4,
+    aiDraft: {
+      text: "基于旧版本的建议",
+      basedOnRevision: 3,
+      conflict: true,
+    },
+  });
+
+  const warning = findByClass(card, "note-ai-draft-warning");
+  assert.equal(warning.hidden, false);
+  assert.match(warning.textContent, /生成期间.*修改/);
+});
+
+test("确认 AI 候选发生版本冲突时同步显示后台返回的最新正文", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = NOTE.bvid;
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    assert.equal(message.action, "resolveNoteDraft");
+    assert.equal(message.mode, "replace");
+    assert.equal(message.expectedRevision, 3);
+    return {
+      success: false,
+      error: "NOTE_CONFLICT",
+      message: "笔记已被其他操作更新，请确认最新内容后重试。",
+      note: {
+        ...NOTE,
+        text: "并发保存的新正文",
+        revision: 4,
+        contentSource: "user",
+        aiDraft: {
+          text: "基于旧版本的 AI 候选",
+          basedOnRevision: 3,
+          conflict: true,
+        },
+      },
+    };
+  };
+
+  const card = ctx.renderNoteCard({
+    ...NOTE,
+    text: "用户再次修改",
+    revision: 3,
+    contentSource: "user",
+    aiDraft: {
+      text: "基于旧版本的 AI 候选",
+      basedOnRevision: 3,
+      conflict: false,
+    },
+  });
+
+  await findButtonByLabel(card, "替换当前").dispatch("click");
+
+  assert.match(noticeOf(card).textContent, /笔记已被其他操作更新/);
+  assert.equal(findByClass(card, "entry-text").textContent, "并发保存的新正文");
+  assert.equal(findByClass(card, "note-ai-draft").hidden, false);
+  assert.equal(
+    findByClass(card, "note-ai-draft-text").textContent,
+    "基于旧版本的 AI 候选",
+  );
+  assert.equal(findByClass(card, "note-ai-draft-warning").hidden, false);
+});
+
 test("点当前视频的笔记就地跳转，不开新标签页", async () => {
   const ctx = createContext({ transcript: transcriptResult() });
   ctx.state.bvid = "BV1xx411c7mD";
@@ -947,6 +1257,39 @@ test("视频已下架时给出提示，不再开标签页", async () => {
   );
   assert.equal(notice.hidden, false);
   assert.match(notice.textContent, /已下架/);
+});
+
+test("笔记导出下载当前列表的 Markdown，空列表不写文件", () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.notesScope = "video";
+  ctx.el("exportNotesBtn").textContent = "导出";
+
+  ctx.exportNotes();
+  assert.deepEqual(ctx.downloads, []);
+  assert.equal(ctx.el("exportNotesBtn").textContent, "没有笔记");
+
+  ctx.renderNotes([
+    {
+      ...NOTE,
+      timestampSeconds: 90,
+      timestamp: "1:30",
+      text: "后记",
+      aiDraft: { text: "不该出现" },
+    },
+    NOTE,
+  ]);
+  ctx.exportNotes();
+
+  assert.equal(ctx.downloads.length, 1);
+  assert.equal(ctx.downloads[0].download, "另一个视频-笔记.md");
+});
+
+test("「全部」范围导出用固定文件名", () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.notesScope = "all";
+  ctx.renderNotes([NOTE]);
+  ctx.exportNotes();
+  assert.equal(ctx.downloads[0].download, "bilibili-digest-笔记.md");
 });
 
 test("生成失败只影响概览这一块，字幕仍然可读", async () => {

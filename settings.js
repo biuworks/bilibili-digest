@@ -109,6 +109,13 @@ var BILI_SETTINGS = (() => {
   const LIMITS = Object.freeze({
     concurrency: Object.freeze({ min: 1, max: 8, default: 3 }),
     timeoutSeconds: Object.freeze({ min: 30, max: 600, default: 120 }),
+    analysisOverlapChars: Object.freeze({ min: 0, max: 2000, default: 400 }),
+  });
+
+  const ANALYSIS_CHUNK_MODES = Object.freeze({
+    auto: Object.freeze({ maxChars: 6000, singleChars: 8000 }),
+    short: Object.freeze({ maxChars: 3500, singleChars: 3500 }),
+    long: Object.freeze({ maxChars: 12000, singleChars: 14000 }),
   });
 
   const DEFAULTS = Object.freeze({
@@ -119,6 +126,8 @@ var BILI_SETTINGS = (() => {
     aiModel: DEFAULT_PRESET.model,
     aiConcurrency: LIMITS.concurrency.default,
     aiTimeoutSeconds: LIMITS.timeoutSeconds.default,
+    analysisChunkMode: "auto",
+    analysisOverlapChars: LIMITS.analysisOverlapChars.default,
     // 字幕轨优先级：UP 主中文 > AI 中文 > 英文（见 lib/bili-api.js）。
     subtitleLangPreference: Object.freeze([
       "zh-CN",
@@ -254,7 +263,22 @@ var BILI_SETTINGS = (() => {
       aiModel: rawModel.slice(0, 200),
       aiConcurrency: clampNumber(source.aiConcurrency, LIMITS.concurrency),
       aiTimeoutSeconds: clampNumber(source.aiTimeoutSeconds, LIMITS.timeoutSeconds),
+      analysisChunkMode: Object.hasOwn(ANALYSIS_CHUNK_MODES, source.analysisChunkMode)
+        ? source.analysisChunkMode
+        : DEFAULTS.analysisChunkMode,
+      analysisOverlapChars: clampNumber(
+        source.analysisOverlapChars,
+        LIMITS.analysisOverlapChars,
+      ),
       subtitleLangPreference: normalizeLangPreference(source.subtitleLangPreference),
+    };
+  }
+
+  function analysisChunkOptions(settings = {}) {
+    const normalized = normalize(settings);
+    return {
+      ...ANALYSIS_CHUNK_MODES[normalized.analysisChunkMode],
+      overlapChars: normalized.analysisOverlapChars,
     };
   }
 
@@ -287,6 +311,8 @@ var BILI_SETTINGS = (() => {
     CUSTOM_PRESET_ID,
     DEFAULTS,
     LIMITS,
+    ANALYSIS_CHUNK_MODES,
+    analysisChunkOptions,
     normalize,
     normalizeLangPreference,
     validate,
