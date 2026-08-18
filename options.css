@@ -210,9 +210,18 @@ input::placeholder {
   gap: 8px;
 }
 
-.field-row input {
+.field-row > input,
+.model-control {
   flex: 1;
   min-width: 0;
+}
+
+.model-control {
+  display: block;
+}
+
+.model-control > [hidden] {
+  display: none;
 }
 
 code {

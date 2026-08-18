@@ -67,11 +67,14 @@
       <label class="field">
         <span class="field-label">模型</span>
         <span class="field-row">
-          <input id="aiModel" type="text" autocomplete="off" spellcheck="false"
-                 placeholder="填模型名，或点右侧按钮拉取" list="modelOptions">
+          <span class="model-control">
+            <input id="aiModel" type="text" autocomplete="off" spellcheck="false"
+                   placeholder="填模型名，或点右侧按钮拉取">
+            <select id="modelOptions" hidden
+                    aria-label="选择已获取的模型"></select>
+          </span>
           <button id="fetchModelsBtn" class="ghost-btn" type="button">拉取模型列表</button>
         </span>
-        <datalist id="modelOptions"></datalist>
         <span class="field-hint" id="modelsHint">
           模型名换代很快，扩展不预置——直接问服务端要当前可用的列表最靠谱。
         </span>

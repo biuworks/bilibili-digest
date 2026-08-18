@@ -102,6 +102,39 @@ function applyPreset(presetId) {
 
 function clearModelOptions() {
   modelOptions.textContent = "";
+  modelOptions.value = "";
+  modelOptions.hidden = true;
+  fields.model.hidden = false;
+}
+
+function showModelOptions(models) {
+  clearModelOptions();
+  const currentModel = fields.model.value;
+
+  // 手填值不在服务端列表里时仍保留为当前选项，不替用户擅自改配置。
+  if (currentModel && !models.includes(currentModel)) {
+    const current = document.createElement("option");
+    current.value = currentModel;
+    current.textContent = `${currentModel}（当前）`;
+    modelOptions.appendChild(current);
+  }
+
+  for (const id of models) {
+    const option = document.createElement("option");
+    option.value = id;
+    option.textContent = id;
+    modelOptions.appendChild(option);
+  }
+
+  const manual = document.createElement("option");
+  manual.value = "";
+  manual.textContent = "手动填写模型名…";
+  modelOptions.appendChild(manual);
+
+  modelOptions.value = currentModel;
+  fields.model.hidden = true;
+  modelOptions.hidden = false;
+  modelOptions.focus();
 }
 
 async function load() {
@@ -188,13 +221,14 @@ async function save() {
 // 拉取模型列表 / 测试连接
 // ============================================================
 
-async function ensurePermissionInteractive(settings) {
+function ensurePermissionInteractive(settings) {
   const origin = BILI_SETTINGS.originOf(settings.aiBaseUrl);
   if (!origin) {
     showStatus("API 地址不合法。", { sticky: true });
-    return false;
+    return Promise.resolve(false);
   }
-  if (await chrome.permissions.contains({ origins: [origin] })) return true;
+  // request 必须直接发生在点击调用栈里。已授权的来源会直接返回 true，
+  // 不会重复弹窗；避免先 await contains 导致 Edge/Chrome 丢失用户手势。
   return requestHostPermission(origin);
 }
 
@@ -229,15 +263,10 @@ async function fetchModels() {
       return;
     }
 
-    clearModelOptions();
-    for (const id of models) {
-      const option = document.createElement("option");
-      option.value = id;
-      modelOptions.appendChild(option);
-    }
     // 还没填模型时顺手填第一个，省得用户再去翻列表。
     if (!fields.model.value) fields.model.value = models[0];
-    modelsHint.textContent = `拿到 ${models.length} 个模型，点输入框可以下拉选择。`;
+    showModelOptions(models);
+    modelsHint.textContent = `拿到 ${models.length} 个模型；可直接选择，或切换到手动填写。`;
     showStatus("模型列表已更新");
   } catch (error) {
     showStatus(`拉取失败：${error.message}。请检查地址和网络。`, { sticky: true });
@@ -297,6 +326,15 @@ fields.protocol.addEventListener("change", () => {
   clearModelOptions();
 });
 fields.baseUrl.addEventListener("change", clearModelOptions);
+modelOptions.addEventListener("change", () => {
+  if (modelOptions.value) {
+    fields.model.value = modelOptions.value;
+    return;
+  }
+  modelOptions.hidden = true;
+  fields.model.hidden = false;
+  fields.model.focus();
+});
 
 document.getElementById("saveBtn").addEventListener("click", save);
 document.getElementById("fetchModelsBtn").addEventListener("click", fetchModels);
