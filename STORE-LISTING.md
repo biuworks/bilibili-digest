@@ -7,8 +7,8 @@ Chrome 应用商店与 Edge 加载项共用这一份，改动请两边同步。
 
 | 商店 | 版本 | 上线日期 | 链接 |
 | --- | --- | --- | --- |
-| Chrome Web Store | 0.1.0 | 2026-08-15 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
-| Microsoft Edge Add-ons | 0.1.0 | 2026-08-17 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
+| Chrome Web Store | 0.1.0（待提交 0.2.0） | 2026-08-15 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
+| Microsoft Edge Add-ons | 0.1.0（待提交 0.2.0） | 2026-08-17 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
 
 **不要在说明里罗列模型服务商的名字。** 0.1.0 首次提交时，「使用方法」里列了
 DeepSeek、OpenAI、Anthropic、Gemini、Kimi、智谱、通义千问、硅基流动、OpenRouter
@@ -29,11 +29,11 @@ Digest for Bilibili 在 B 站播放页旁边打开一个侧边栏，把当前视
 
 功能
 • 字幕阅读 — 字幕取自 B 站官方接口，支持原文 / 译文 / 双语三种视图。当前句跟随播放高亮，点任意一句跳到视频对应时间点，支持全文搜索、一键复制和导出 TXT。
-• 顺句 — B 站的 AI 字幕没有标点、同音错别字多。开启后由 AI 补标点、改错别字，只做可读性修复，不改措辞、不动时间轴。
-• 双向翻译 — 中文字幕译成英文，外文字幕译成中文，方向按字幕轨语种自动选择。
-• 章节概览 — AI 通读整篇字幕，产出带时间戳的章节和金句，点章节即可跳转到视频对应位置。长视频按分段边界切块并发生成，部分失败不影响已完成的部分。
+• 顺句 — B 站的 AI 字幕没有标点、同音错别字多。开启后由 AI 补标点、改错别字，只做可读性修复，不改措辞、不动时间轴。运行时显示批次进度，可随时停止。
+• 双向翻译 — 中文字幕译成英文，外文字幕译成中文，方向按字幕轨语种自动选择。翻译过程同样可停止，已完成的句子继续保留。
+• 章节概览 — AI 通读整篇字幕，产出带时间戳的章节和金句，点章节即可跳转到视频对应位置。长视频按分段边界切块并发生成，部分失败不影响已完成的部分。生成期间可停止，完成后可重新生成。
 • 划词解释 — 选中字幕里不懂的术语或概念，点「解释」，AI 结合前后文用大白话讲清楚，解释浮层就贴在选中的文字旁边。
-• 时间戳笔记 — 播放时按 n 或点播放器上的「笔记」按钮记下当前时间点，AI 把当时那句字幕整理成通顺的一句话。笔记卡片支持回放、复制、跳转，可以只看本视频的，也可以翻全部视频的历史笔记。
+• 时间戳笔记 — 播放时按 n 或点播放器上的「笔记」按钮记下当前时间点，AI 把当时那句字幕整理成通顺的一句话。笔记卡片支持编辑、回放、复制和跳转；手动改过正文后可让 AI 生成优化建议，预览后再选择保留、替换或追加。当前列表可导出为带时间戳链接的 Markdown，范围跟「本视频 / 全部」一致。
 
 使用方法
 1. 安装后打开扩展的设置页，填入你自己的模型服务地址与 API 密钥，点「保存并授权」。设置页备有常见服务的地址预设，选一个再填上密钥即可；也可以手动填写任意兼容接口的地址，本机运行的推理服务同样支持。
@@ -54,6 +54,7 @@ Digest for Bilibili 在 B 站播放页旁边打开一个侧边栏，把当前视
 反馈
 Bug 与建议请提交到 https://github.com/biuworks/bilibili-digest/issues
 
+版本 0.2.0 — 顺句、翻译、概览和笔记优化可停止；笔记可二次优化，并可导出 Markdown
 版本 0.1.0 — 首次发布
 ```
 
@@ -164,6 +165,8 @@ https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
 - [ ] ZIP 不包含测试、截图、README、隐私政策或本文件。
 - [ ] 同一个解压包分别在 Chrome 与 Edge 中旁加载验证。
 - [ ] 字幕、顺句、翻译、概览、解释和笔记流程正常。
+- [ ] 顺句、翻译、概览、笔记优化可停止，取消不留半成品。
+- [ ] 笔记导出 Markdown 与当前「本视频 / 全部」列表一致。
 - [ ] 商店截图与当前界面一致且不含个人信息。
 - [ ] 隐私政策 URL 可公开访问。
 - [ ] 联系邮箱已验证。
