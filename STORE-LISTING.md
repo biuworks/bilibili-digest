@@ -10,6 +10,79 @@ Chrome 应用商店与 Edge 加载项共用这一份，改动请两边同步。
 | Chrome Web Store | 0.1.0（待提交 0.2.0） | 2026-08-15 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
 | Microsoft Edge Add-ons | 0.1.0（待提交 0.2.0） | 2026-08-17 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
 
+两个商店用**同一个 zip**。0.2.0 相对商店里的 0.1.0：侧边栏改为窗口级（Edge 切标签页不再关掉面板）、界面重做、金句挂在所属章节下、AI 任务可停止、笔记可二次优化并导出 Markdown、笔记超过 100 条不再静默丢弃。
+
+---
+
+## 0.2.0 提交包
+
+先把本仓库推到 GitHub，再点提交：商店里的隐私政策 URL 指向 GitHub 上的 `PRIVACY.md`，不能比安装包旧。
+
+### 安装包
+
+```text
+dist/digest-for-bilibili-0.2.0.zip
+```
+
+Chrome 开发者后台与 Edge 合作伙伴中心都上传这一份。ZIP 顶层必须是 `manifest.json`。
+
+### 商店截图（1280×800，按这个顺序替换）
+
+```text
+store/screenshots/01-transcript.png
+store/screenshots/02-overview.png
+store/screenshots/03-explain.png
+store/screenshots/04-notes.png
+store/screenshots/05-notes-refine.png
+```
+
+Chrome 最多 5 张，这次正好用满。Edge 扩展徽标仍用 `store/logo-300.png`，图标仍用 `icons/icon128.png`。
+
+### 后台里要改 / 不用改
+
+| 字段 | 操作 |
+| --- | --- |
+| 安装包 | 上传上面的 zip |
+| 详细说明 | 整段替换为下面「详细说明」 |
+| 截图 | 五张全部换成新图 |
+| 名称、简短说明、类别、单一用途 | 不用改 |
+| 权限理由 | 不用改（权限集合没变） |
+| 数据披露 | 不用改（仍是 API 密钥 + 网站内容） |
+| 隐私政策 URL | 不用改，但确认 GitHub 上已是最新 `PRIVACY.md` |
+| 远程代码 | 仍选「否」 |
+| 认证说明 | **每次提交都要换一把临时密钥**，按文末模板填 |
+
+### Chrome 应用商店
+
+1. 打开 [Chrome 开发者后台](https://chrome.google.com/webstore/devconsole) → Digest for Bilibili → 套件。
+2. 上传 `dist/digest-for-bilibili-0.2.0.zip`。
+3. 商店资讯：贴「详细说明」，截图按 01–05 顺序替换。
+4. 隐私：核对披露与远程代码选项未被动过。
+5. 填认证说明（临时密钥 + 一条免登录就能出字幕的 BV）。
+6. 提交审核。可选「审核通过后再发布」，两边进度容易对齐。
+
+### Microsoft Edge 加载项
+
+1. 打开 [Edge 合作伙伴中心](https://partner.microsoft.com/dashboard) → Digest for Bilibili。
+2. 上传**同一份** zip。
+3. 产品详情里替换详细说明和五张截图；300×300 徽标不用动。
+4. 隐私与认证说明与 Chrome 相同。
+5. 提交审核。
+
+### 给审核员的变更摘要（可选，有「版本说明」栏再贴）
+
+```text
+0.2.0 功能更新，Chrome 与 Edge 使用同一份 MV3 安装包。
+
+- 侧边栏改为窗口级：在同一窗口内切换标签页不会关掉面板
+- 顺句、翻译、概览、笔记优化都可以停止，取消不留下半成品
+- 笔记支持二次 AI 优化：先预览，再选择保留、替换或追加
+- 当前笔记列表可导出为带时间戳链接的 Markdown
+- 笔记超过 100 条不再静默丢弃最旧条目
+
+权限、主机范围和数据类别与 0.1.0 相同。验证步骤见认证说明。
+```
+
 **不要在说明里罗列模型服务商的名字。** 0.1.0 首次提交时，「使用方法」里列了
 DeepSeek、OpenAI、Anthropic、Gemini、Kimi、智谱、通义千问、硅基流动、OpenRouter
 九个预设名，被 Chrome 应用商店判为「关键字垃圾内容」退回（政策禁止过多或不相关的
@@ -54,7 +127,7 @@ Digest for Bilibili 在 B 站播放页旁边打开一个侧边栏，把当前视
 反馈
 Bug 与建议请提交到 https://github.com/biuworks/bilibili-digest/issues
 
-版本 0.2.0 — 顺句、翻译、概览和笔记优化可停止；笔记可二次优化，并可导出 Markdown
+版本 0.2.0 — 侧边栏在同一窗口内保持打开；顺句、翻译、概览和笔记优化可停止；笔记可二次优化并导出 Markdown；笔记不再在 100 条时静默丢弃
 版本 0.1.0 — 首次发布
 ```
 
@@ -91,8 +164,9 @@ Reads the subtitle track of the Bilibili video the user is currently watching an
 | 概览截图 | 1280×800 | `store/screenshots/02-overview.png` |
 | 划词解释截图 | 1280×800 | `store/screenshots/03-explain.png` |
 | 笔记截图 | 1280×800 | `store/screenshots/04-notes.png` |
+| 笔记 AI 优化截图 | 1280×800 | `store/screenshots/05-notes-refine.png` |
 
-界面变化后，先重截 `imgs/` 下的四张原图，再运行：
+界面变化后，先跑 `node scripts/capture-sidepanel.js` 重截 `imgs/` 下五张原图，再运行：
 
 ```bash
 python3 scripts/make-store-screenshots.py
@@ -158,15 +232,18 @@ https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
 
 ## 发布前检查
 
+- [ ] 已 `git push`，GitHub 上的 `PRIVACY.md` 与本次安装包一致。
 - [ ] 更新 `manifest.json` 版本号和本文件的发布状态。
 - [ ] `npm test` 全部通过。
-- [ ] `npm run package` 成功。
+- [ ] `npm run package` 得到 `dist/digest-for-bilibili-0.2.0.zip`。
 - [ ] ZIP 顶层直接包含 `manifest.json`。
 - [ ] ZIP 不包含测试、截图、README、隐私政策或本文件。
 - [ ] 同一个解压包分别在 Chrome 与 Edge 中旁加载验证。
 - [ ] 字幕、顺句、翻译、概览、解释和笔记流程正常。
 - [ ] 顺句、翻译、概览、笔记优化可停止，取消不留半成品。
+- [ ] 笔记二次优化先出预览，确认后才改写正文。
 - [ ] 笔记导出 Markdown 与当前「本视频 / 全部」列表一致。
+- [ ] Edge 切到另一个标签页时侧边栏仍在。
 - [ ] 商店截图与当前界面一致且不含个人信息。
 - [ ] 隐私政策 URL 可公开访问。
 - [ ] 联系邮箱已验证。

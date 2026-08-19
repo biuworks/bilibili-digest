@@ -749,6 +749,15 @@ test("样式里必须兜住 hidden，否则整套显隐都是摆设", () => {
   assert.match(css, /\[hidden\]\s*\{[^}]*display:\s*none\s*!important/);
 });
 
+test("工具栏动作区垂直居中，条数和导出按钮才会对齐", () => {
+  const css = fs.readFileSync(path.join(ROOT, "sidepanel.css"), "utf8");
+  assert.match(
+    css,
+    /\.panel-toolbar-actions\s*\{[^}]*align-items:\s*center/,
+    "条数是 span、导出是按钮，缺了居中会被 stretch 拉成一高一低",
+  );
+});
+
 test("命中的字会被 mark 标出来", async () => {
   const ctx = createContext({ transcript: transcriptResult() });
   ctx.state.bvid = "BV1xx411c7mD";

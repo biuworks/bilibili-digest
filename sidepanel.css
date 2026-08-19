@@ -221,6 +221,7 @@ button {
   padding: 4px 12px;
   font-size: 12px;
   font-weight: 500;
+  line-height: 1.2;
   color: var(--text-muted);
   background: transparent;
   border: 1px solid var(--border);
@@ -577,7 +578,12 @@ button {
 
 .panel-toolbar-actions {
   display: flex;
+  align-items: center;
   gap: 6px;
+}
+
+.panel-toolbar .muted {
+  line-height: 1;
 }
 
 .section-heading {
@@ -610,9 +616,13 @@ button {
 }
 
 .segmented-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   padding: 4px 12px;
   font-size: 12px;
   font-weight: 500;
+  line-height: 1.2;
   color: var(--text-muted);
   background: transparent;
   border: none;

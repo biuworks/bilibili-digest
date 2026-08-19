@@ -38,8 +38,8 @@
 不读取、不保存、也不传输 Cookie 的内容。字幕文件本身的下载不携带 Cookie。
 
 **二、你自己配置的 AI 服务**（地址由你在设置页填写）
-使用顺句、翻译、概览、划词解释或笔记整理时，相应的字幕文本、你选中的文字
-和视频标题会随请求发往该服务，并在请求头中携带你的 API 密钥。
+使用顺句、翻译、概览、划词解释、笔记整理或笔记二次优化时，相应的字幕文本、
+当前笔记正文、你选中的文字和视频标题会随请求发往该服务，并在请求头中携带你的 API 密钥。
 这个地址完全由你决定，可以是任一商业模型服务，也可以是你本机运行的
 推理服务——填本机地址时数据不出设备。可选的服务在设置页的下拉里列出。
 
@@ -84,8 +84,8 @@ This policy covers both the Chrome and the Edge build — they are the same code
   metadata and subtitles — the browser attaches your existing Bilibili login cookies
   because subtitles require sign-in; the extension holds no `cookies` permission and
   never reads or transmits cookie contents; (2) requests to the AI endpoint **you**
-  configure, carrying transcript text, selected text, video title, and your API key in
-  the request header. That endpoint may be a commercial provider or a model server
+  configure, carrying transcript text, selected text, current note body, video title,
+  and your API key in the request header. That endpoint may be a commercial provider or a model server
   running on your own machine, in which case nothing leaves your machine.
 - **Host permissions**: only Bilibili domains are requested at install time. The AI
   endpoint's domain is unknown at install time and is requested at runtime, per origin,

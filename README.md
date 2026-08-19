@@ -1,18 +1,16 @@
 # Digest for Bilibili
 
-把 B 站视频变成学习资源的浏览器扩展：在播放页旁边开一个侧边栏，
-提供字幕阅读、双语对照、AI 概览、划词解释和带时间戳的笔记。
+把 B 站视频变成学习资源：在播放页旁边打开侧边栏，阅读字幕、对照双语、生成章节概览、划词解释，并记下带时间戳的笔记。
 
-**B 站网页端的 [youtube-digest](https://github.com/zarazhangrui/youtube-digest) 复刻项目**，
-架构蓝本与提示词起点来自上游仓库（MIT）。
+**B 站网页端的 [youtube-digest](https://github.com/zarazhangrui/youtube-digest) 复刻项目**，架构蓝本与提示词起点来自上游仓库（MIT）。
 
 ---
 
 <a id="store-install"></a>
 
-## 🚀 安装（Chrome 与 Edge 商店）
+## 安装（Chrome 与 Edge 商店）
 
-v0.1.0 已通过两家浏览器商店审核并公开发布：
+同一份代码、同一个安装包，两边功能没有差别。需要 116 及以上的版本。
 
 [![Chrome Web Store](https://img.shields.io/badge/Chrome_Web_Store-Digest_for_Bilibili-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc)
 [![Microsoft Edge Add-ons](https://img.shields.io/badge/Microsoft_Edge_Add--ons-Digest_for_Bilibili-0078D7?style=for-the-badge&logo=microsoftedge&logoColor=white)](https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm)
@@ -22,71 +20,58 @@ v0.1.0 已通过两家浏览器商店审核并公开发布：
 | Chrome Web Store | 2026-08-15 | [安装 Digest for Bilibili](https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc) |
 | Microsoft Edge Add-ons | 2026-08-17 | [安装 Digest for Bilibili](https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm) |
 
-点击对应商店的徽章或表格链接即可安装。商店搜索索引可能稍晚更新，直达链接可正常使用。
+商店索引可能稍晚更新，直达链接可正常使用。
 
 ---
 
 ## 字幕
 
-字幕直接取自 B 站官方接口，不经第三方服务。
+字幕取自 B 站官方接口，不经第三方服务。
 
-- **三视图**：原文 / 译文 / 双语，翻译是双向的——中文字幕译成英文，外文字幕译成中文，方向按字幕轨语种自动选择
-- **顺句**：B 站的 AI 字幕没有标点、同音错别字很多，开启后由 AI 补标点、改错别字，只做可读性修复，不改措辞和时间轴
-- **任务可控**：顺句收在“AI 处理”菜单中；顺句或翻译运行时显示批次进度，可随时停止，已完成内容继续保留，重复点击不会启动第二轮请求
-- **跟随播放**：当前句高亮，点任意一句跳到对应时间点，跟丢了有「回到当前句」浮标
-- 全文搜索（快捷键 `/`）、一键复制、导出 TXT
+- 原文 / 译文 / 双语三种视图；中文译英、外文译中，方向按字幕轨语种自动选择
+- 顺句：为 AI 字幕补标点、改同音错别字，不改措辞、不动时间轴
+- 顺句与翻译显示批次进度，可随时停止；已完成内容保留
+- 当前句跟随播放高亮，点一句跳到对应时间；跟丢了有「回到当前句」
+- 全文搜索（快捷键 `/`）、复制、导出 TXT
 
-![字幕的双语对照视图](imgs/字幕.png)
+<img src="imgs/transcript.png" width="440" alt="字幕双语对照">
 
 ## 概览
 
-让 AI 通读整篇字幕，产出带时间戳的章节和金句——金句按时间戳挂在所属章节之下，
-形成「章节 → 金句」的层次结构，点章节或金句即可跳转到视频对应位置。
+AI 通读字幕，产出带时间戳的章节，金句按时间挂在所属章节之下。点章节或金句即可跳转。
 
-长视频不是一次请求生成的：字幕先按分段边界切块，每块附带上一块的结尾作为上下文，
-并发生成后合并去重。部分块失败也不会让整次生成作废，已完成的部分照常显示。
-生成期间会显示“第 N/M 块”和合并阶段，可直接停止；生成完成后可直接重新生成。所有参数统一从侧边栏右上角的设置按钮进入，避免重复入口。
-设置页可选择自动、较短或较长分块，默认自动即可；也可以调整相邻分块重复携带的上下文字符数。
+长视频按分段切块并发生成，块与块之间携带重叠上下文；部分失败不影响已完成的部分。生成期间可停止，完成后可重新生成。分块长度与重叠字数在设置页调整。
 
-![概览的章节列表](imgs/概览.png)
+<img src="imgs/overview.png" width="440" alt="概览章节与金句">
 
 ## 划词解释
 
-看到不懂的术语或概念，选中它点「解释」，AI 会结合前后文用大白话讲清楚。
-解释浮层就贴在选中的那段文字旁边。
+选中字幕里的术语或概念，点「解释」。AI 结合前后文用大白话说明，浮层贴在选中文字旁边。
 
-![划词解释的浮层](imgs/解释.png)
+<img src="imgs/explain.png" width="440" alt="划词解释">
 
 ## 笔记
 
-播放时点播放器上的「笔记」按钮或按 `n`，记下当前时间点。
-AI 会把当时那句字幕整理成通顺的一句话，笔记卡片支持编辑、回放、复制和跳转链接；
-手动编辑后还可以让 AI 基于当前正文生成优化建议，预览后再选择保留、替换或追加。
-优化运行时按钮会切换为“停止”；取消不会改写正文，也不会留下半成品候选。
-笔记按视频与分 P 保存，可以只看当前分 P，也可以翻全部视频的历史笔记；超过 100 条后
-也不会静默删除旧内容。当前列表可导出为 Markdown，条目带时间戳跳转链接；导出范围
-跟「本视频 / 全部」签切一致。
+播放时点播放器上的「笔记」或按 `n`，记下当前时间点。AI 把当时那句字幕整理成通顺一句话。
 
-![笔记列表](imgs/笔记.png)
+卡片可编辑、回放、复制和跳转。手动改过正文后，可让 AI 给出优化建议，预览后再选择保留、替换或追加。优化可以停止，取消不改写正文。
 
-## 安装
+笔记按视频与分 P 保存；可只看当前分 P，或翻全部历史。当前列表可导出为带时间戳链接的 Markdown，范围跟「本视频 / 全部」一致。
 
-商店安装见顶部 [🚀 安装](#store-install)。
+<img src="imgs/notes.png" width="440" alt="时间戳笔记">
 
-Chrome 和 Edge 用的是同一份代码、同一个安装包，功能没有差别。
-两者都需要 116 及以上的版本——这是侧边栏 API 的门槛。
+<img src="imgs/notes-refine.png" width="440" alt="笔记 AI 优化建议">
 
-本地加载：跑 `npm run package` 得到 `dist/` 下的 zip，解压后打开扩展管理页
-（Chrome 是 `chrome://extensions`，Edge 是 `edge://extensions`），
-开启开发者模式，点「加载已解压的扩展程序」选中解压出来的目录。
+## 本地加载
 
-装好后会自动打开设置页。字幕阅读开箱即用，顺句、翻译、概览、划词解释
-和笔记整理要先在那里填一个 AI 服务的地址和密钥。
+商店安装见顶部 [安装](#store-install)。
 
-商店审核材料（提交底稿）见 [STORE-LISTING.md](STORE-LISTING.md)。
+跑 `npm run package` 得到 `dist/` 下的 zip，解压后打开扩展管理页（`chrome://extensions` 或 `edge://extensions`），开启开发者模式，加载解压目录。
+
+装好后会打开设置页。字幕阅读开箱即用；顺句、翻译、概览、划词解释和笔记整理需要先填模型服务地址和密钥。
+
+商店审核底稿见 [STORE-LISTING.md](STORE-LISTING.md)。
 
 ## 许可与致谢
 
-[MIT](LICENSE)。本项目源自 [youtube-digest](https://github.com/zarazhangrui/youtube-digest)
-（MIT，Copyright (c) Zara Zhang），架构蓝本与部分提示词模板来自该仓库，
-沿用相同协议并保留其署名——详见 LICENSE 与 `prompts/` 各文件头部的出处说明。
+[MIT](LICENSE)。源自 [youtube-digest](https://github.com/zarazhangrui/youtube-digest)（MIT，Copyright (c) Zara Zhang），架构蓝本与部分提示词模板来自该仓库。出处见 LICENSE 与 `prompts/` 各文件头部。
