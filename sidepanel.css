@@ -864,6 +864,10 @@ button {
   box-shadow: var(--shadow-md);
 }
 
+.action-menu-popover-wide {
+  min-width: 168px;
+}
+
 .action-menu-popover button {
   display: block;
   width: 100%;

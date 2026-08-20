@@ -239,3 +239,116 @@ test("全部分组时组内升序、组之间按最新笔记倒序", () => {
     ].join("\n"),
   );
 });
+
+test("学习稿没有章节、笔记和字幕时导出为空", () => {
+  assert.equal(STORE.learningAsMarkdown({}), "");
+  assert.equal(STORE.learningAsMarkdown({ notes: [], analysis: { chapters: [] } }), "");
+});
+
+test("学习稿带 YAML、章节内金句、笔记，不含 AI 草稿", () => {
+  const markdown = STORE.learningAsMarkdown({
+    title: "如何听懂",
+    author: "实验室",
+    bvid: "BV1xx411c7mD",
+    page: 1,
+    exportedAt: "2026-08-19T12:00:00.000Z",
+    analysis: {
+      chapters: [
+        {
+          timestamp: "0:08",
+          timestampSeconds: 8,
+          title: "拆成三步",
+          summary: "先结构后概念。",
+        },
+      ],
+      keyQuotes: [
+        { timestamp: "0:32", timestampSeconds: 32, quote: "心里要有一张地图。" },
+      ],
+    },
+    notes: [
+      {
+        ...NOTE_A,
+        aiDraft: { text: "不该出现" },
+      },
+    ],
+  });
+
+  assert.equal(
+    markdown,
+    [
+      "---",
+      "title: 如何听懂",
+      "bvid: BV1xx411c7mD",
+      "page: 1",
+      "author: 实验室",
+      'url: "https://www.bilibili.com/video/BV1xx411c7mD"',
+      "created_at: 2026-08-19",
+      "tags:",
+      "  - bilibili-digest",
+      "---",
+      "",
+      "## 视频概览",
+      "",
+      "- [0:08](https://www.bilibili.com/video/BV1xx411c7mD?t=8) 拆成三步",
+      "",
+      "## 章节",
+      "",
+      "### [0:08](https://www.bilibili.com/video/BV1xx411c7mD?t=8) 拆成三步",
+      "",
+      "先结构后概念。",
+      "",
+      "> [0:32](https://www.bilibili.com/video/BV1xx411c7mD?t=32) 心里要有一张地图。",
+      "",
+      "## 我的时间戳笔记",
+      "",
+      "- [1:05](https://www.bilibili.com/video/BV1xx411c7mD?t=65) 较早的一条",
+      "",
+    ].join("\n"),
+  );
+  assert.doesNotMatch(markdown, /不该出现/);
+});
+
+test("章前金句单独成节，含字幕时跟当前视图走", () => {
+  const markdown = STORE.learningAsMarkdown({
+    title: "课: 开场",
+    bvid: "BV1yy411c7mD",
+    page: 2,
+    exportedAt: "2026-08-19T12:00:00.000Z",
+    analysis: {
+      chapters: [
+        {
+          timestamp: "1:00",
+          timestampSeconds: 60,
+          title: "正题",
+          summary: "进入正题。",
+        },
+      ],
+      keyQuotes: [
+        { timestamp: "0:10", timestampSeconds: 10, quote: "片头语" },
+      ],
+    },
+    transcript: {
+      mode: "bilingual",
+      segments: [
+        {
+          start: 8,
+          source: "先抓住结构。",
+          translation: "Start with structure.",
+        },
+      ],
+    },
+  });
+
+  assert.match(markdown, /^title: "课: 开场"$/m);
+  assert.match(markdown, /url: "https:\/\/www\.bilibili\.com\/video\/BV1yy411c7mD\?p=2"/);
+  assert.match(markdown, /## 金句/);
+  assert.match(
+    markdown,
+    /- \[0:10\]\(https:\/\/www\.bilibili\.com\/video\/BV1yy411c7mD\?p=2&t=10\) 片头语/,
+  );
+  assert.doesNotMatch(markdown, /## 我的时间戳笔记/);
+  assert.match(
+    markdown,
+    /- \[0:08\]\(https:\/\/www\.bilibili\.com\/video\/BV1yy411c7mD\?p=2&t=8\) 先抓住结构。\n  Start with structure\./,
+  );
+});

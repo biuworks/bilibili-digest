@@ -1240,6 +1240,10 @@ function renderNotes(notes, { noVideo = false } = {}) {
   state.notes = list;
   el("notesCount").textContent = list.length ? `${list.length} 条` : "";
   el("notesEmpty").hidden = list.length > 0;
+  const videoScope = state.notesScope !== "all";
+  el("exportLearningBtn").hidden = !videoScope;
+  el("exportLearningTranscriptBtn").hidden = !videoScope;
+  el("notesExportLearningDivider").hidden = !videoScope;
 
   if (noVideo) {
     // 文案与 idle 态完全一致；图标沿用笔记空态自己的笔记图标，
@@ -1792,6 +1796,8 @@ function exportTranscript() {
 }
 
 function exportNotes() {
+  const menu = el("notesExportMenu");
+  if (menu) menu.open = false;
   const notes = state.notes || [];
   const grouped = state.notesScope === "all";
   const markdown = BILI_LEARNING_STORE.notesAsMarkdown(notes, { grouped });
@@ -1803,6 +1809,65 @@ function exportNotes() {
     ? "bilibili-digest-笔记.md"
     : `${sanitizeFilename(notes[0]?.videoTitle || state.data?.videoInfo?.title || state.bvid || "笔记")}-笔记.md`;
   downloadText(markdown, filename, "text/markdown;charset=utf-8");
+}
+
+function currentTranscriptExport() {
+  if (!state.data?.segments?.length) return null;
+  return {
+    mode: state.transcriptMode,
+    segments: state.data.segments.map((segment) => ({
+      start: segment.start,
+      source: sourceText(segment),
+      translation: state.translated[segment.id] || "",
+      display: segmentDisplayText(segment),
+    })),
+  };
+}
+
+async function notesForLearningExport() {
+  if (!state.bvid) return [];
+  if (state.tab === "notes" && state.notesScope === "video") {
+    return state.notes || [];
+  }
+  const result = await chrome.runtime.sendMessage({
+    action: "getNotes",
+    bvid: state.bvid,
+    page: state.page,
+  });
+  return result?.notes || [];
+}
+
+function closeExportMenus() {
+  for (const id of ["notesExportMenu", "overviewExportMenu"]) {
+    const menu = el(id);
+    if (menu) menu.open = false;
+  }
+}
+
+async function exportLearning({ includeTranscript = false, trigger } = {}) {
+  closeExportMenus();
+  const button = trigger || el("exportLearningBtn");
+  const notes = await notesForLearningExport();
+  const markdown = BILI_LEARNING_STORE.learningAsMarkdown({
+    title: state.data?.videoInfo?.title || state.bvid || "",
+    author: state.data?.videoInfo?.owner || "",
+    bvid: state.bvid || "",
+    page: state.page,
+    exportedAt: Date.now(),
+    analysis: state.analysis,
+    notes,
+    transcript: includeTranscript ? currentTranscriptExport() : null,
+  });
+  if (!markdown) {
+    flashButton(button, "没有可导出的内容");
+    return;
+  }
+  const title = state.data?.videoInfo?.title || state.bvid || "学习稿";
+  downloadText(
+    markdown,
+    `${sanitizeFilename(title)}-学习稿.md`,
+    "text/markdown;charset=utf-8",
+  );
 }
 
 function downloadText(text, filename, type) {
@@ -1842,6 +1907,14 @@ function setupEventListeners() {
   el("copyBtn").addEventListener("click", copyTranscript);
   el("exportBtn").addEventListener("click", exportTranscript);
   el("exportNotesBtn").addEventListener("click", exportNotes);
+  for (const button of document.querySelectorAll("[data-learning-export]")) {
+    button.addEventListener("click", () => {
+      exportLearning({
+        includeTranscript: button.dataset.learningExport === "transcript",
+        trigger: button,
+      });
+    });
+  }
   el("searchBtn").addEventListener("click", () => {
     if (el("searchRow").hidden) openSearch();
     else closeSearch();

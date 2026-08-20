@@ -82,7 +82,7 @@ function createElement(tag = "div") {
   };
 }
 
-function createContext({ transcript, analysis, videoAvailable = { available: true } }) {
+function createContext({ transcript, analysis, videoAvailable = { available: true }, notes = [] }) {
   const elements = new Map();
   const byId = (id) => {
     if (!elements.has(id)) elements.set(id, createElement("div"));
@@ -130,6 +130,7 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
             return { success: true, translated };
           }
           if (message.action === "checkVideoAvailable") return videoAvailable;
+          if (message.action === "getNotes") return { success: true, notes };
           return { success: true };
         },
         onMessage: { addListener() {} },
@@ -165,7 +166,7 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, renderNotes };`,
+    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes };`,
     context,
   );
 
@@ -1293,12 +1294,62 @@ test("笔记导出下载当前列表的 Markdown，空列表不写文件", () =>
   assert.equal(ctx.downloads[0].download, "另一个视频-笔记.md");
 });
 
-test("「全部」范围导出用固定文件名", () => {
+test("「全部」范围导出用固定文件名，且不提供学习稿", () => {
   const ctx = createContext({ transcript: transcriptResult() });
   ctx.state.notesScope = "all";
   ctx.renderNotes([NOTE]);
   ctx.exportNotes();
   assert.equal(ctx.downloads[0].download, "bilibili-digest-笔记.md");
+  assert.equal(ctx.el("exportLearningBtn").hidden, true);
+  assert.equal(ctx.el("exportLearningTranscriptBtn").hidden, true);
+
+  ctx.state.notesScope = "video";
+  ctx.renderNotes([NOTE]);
+  assert.equal(ctx.el("exportLearningBtn").hidden, false);
+});
+
+test("学习稿会拉取当前视频笔记并写成 Markdown 文件名", async () => {
+  const note = {
+    ...NOTE,
+    bvid: "BV1xx411c7mD",
+    timestampSeconds: 5,
+    timestamp: "0:05",
+    text: "记下开场",
+  };
+  const ctx = createContext({ transcript: transcriptResult(), notes: [note] });
+  ctx.state.bvid = "BV1xx411c7mD";
+  ctx.state.tab = "overview";
+  await ctx.loadTranscript();
+  ctx.state.analysis = ANALYSIS;
+  ctx.el("exportLearningBtn").textContent = "学习稿";
+
+  await ctx.exportLearning();
+
+  assert.equal(ctx.downloads.length, 1);
+  assert.equal(ctx.downloads[0].download, "标题-学习稿.md");
+  assert.ok(ctx.sent.some((message) => message.action === "getNotes"));
+});
+
+test("学习稿可附带当前字幕视图；空内容不写文件", async () => {
+  const ctx = createContext({
+    transcript: transcriptResult(),
+    notes: [],
+  });
+  ctx.state.bvid = "BV1xx411c7mD";
+  ctx.state.tab = "notes";
+  ctx.state.notesScope = "video";
+  await ctx.loadTranscript();
+  ctx.state.analysis = null;
+  ctx.renderNotes([]);
+  ctx.el("exportLearningBtn").textContent = "学习稿";
+
+  await ctx.exportLearning();
+  assert.deepEqual(ctx.downloads, []);
+  assert.equal(ctx.el("exportLearningBtn").textContent, "没有可导出的内容");
+
+  await ctx.exportLearning({ includeTranscript: true });
+  assert.equal(ctx.downloads.length, 1);
+  assert.equal(ctx.downloads[0].download, "标题-学习稿.md");
 });
 
 test("生成失败只影响概览这一块，字幕仍然可读", async () => {

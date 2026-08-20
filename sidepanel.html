@@ -195,6 +195,13 @@
         <div class="panel-toolbar">
           <span id="overviewMeta" class="muted"></span>
           <div class="panel-toolbar-actions">
+            <details id="overviewExportMenu" class="action-menu">
+              <summary class="ghost-btn">导出</summary>
+              <div class="action-menu-popover action-menu-popover-wide">
+                <button type="button" data-learning-export="packet">学习稿</button>
+                <button type="button" data-learning-export="transcript">学习稿（含字幕）</button>
+              </div>
+            </details>
             <button id="reanalyzeBtn" class="ghost-btn" type="button">重新生成</button>
           </div>
         </div>
@@ -215,7 +222,15 @@
         </div>
         <div class="panel-toolbar-actions">
           <span id="notesCount" class="muted"></span>
-          <button id="exportNotesBtn" class="ghost-btn" type="button" title="导出 Markdown">导出</button>
+          <details id="notesExportMenu" class="action-menu">
+            <summary class="ghost-btn">导出</summary>
+            <div class="action-menu-popover action-menu-popover-wide">
+              <button id="exportLearningBtn" type="button" data-learning-export="packet">学习稿</button>
+              <button id="exportLearningTranscriptBtn" type="button" data-learning-export="transcript">学习稿（含字幕）</button>
+              <div id="notesExportLearningDivider" class="action-menu-divider"></div>
+              <button id="exportNotesBtn" type="button">仅笔记</button>
+            </div>
+          </details>
         </div>
       </div>
       <div id="notesList" class="notes-list"></div>
