@@ -7,8 +7,8 @@ Chrome 应用商店与 Edge 加载项共用这一份，改动请两边同步。
 
 | 商店 | 版本 | 上线日期 | 链接 |
 | --- | --- | --- | --- |
-| Chrome Web Store | 0.1.0（待提交 0.2.0） | 2026-08-15 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
-| Microsoft Edge Add-ons | 0.1.0（待提交 0.2.0） | 2026-08-17 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
+| Chrome Web Store | 0.2.0 | 2026-08-15（0.1.0）/ 2026-08-22（0.2.0） | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
+| Microsoft Edge Add-ons | 0.2.0 | 2026-08-17（0.1.0）/ 2026-08-22（0.2.0） | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
 
 两个商店用**同一个 zip**。0.2.0 相对商店里的 0.1.0：侧边栏改为窗口级（Edge 切标签页不再关掉面板）、界面重做、金句挂在所属章节下、AI 任务可停止、笔记可二次优化并导出 Markdown、笔记超过 100 条不再静默丢弃。
 
