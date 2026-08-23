@@ -116,6 +116,7 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
       querySelectorAll: () => [],
       querySelector: (selector) => selector === ".content" ? byId("content") : null,
       addEventListener() {},
+      documentElement: { dataset: {} },
     },
     navigator: { clipboard: { writeText: async () => {} } },
     chrome: {
@@ -124,6 +125,14 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
           sent.push(message);
           if (message.action === "fetchTranscript") return transcript;
           if (message.action === "analyzeTranscript") return analysis;
+          if (message.action === "retryFailedAnalysis") {
+            return {
+              success: true,
+              analysis: ANALYSIS,
+              analysisFailures: [],
+              failedChunks: 0,
+            };
+          }
           if (message.action === "translateSegments") {
             const translated = {};
             for (const id of message.segmentIds) translated[id] = `${id} 的译文`;
@@ -149,7 +158,10 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
         onUpdated: { addListener() {} },
       },
       windows: { getCurrent: async () => ({ id: 1 }) },
-      storage: { local: { get: async () => ({}) } },
+      storage: {
+        local: { get: async () => ({}) },
+        onChanged: { addListener() {} },
+      },
     },
     BILI_TRANSCRIPT: require("../lib/transcript.js"),
     BILI_AI: require("../lib/ai.js"),
@@ -166,7 +178,7 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes };`,
+    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground };`,
     context,
   );
 
@@ -203,6 +215,93 @@ function transcriptResult(extra = {}) {
     ...extra,
   };
 }
+
+// ============================================================
+// service worker 被回收后的消息通道
+// ============================================================
+
+const UNREACHABLE = "Could not establish connection. Receiving end does not exist.";
+const PORT_CLOSED = "The message port closed before a response was received.";
+
+test("后台唤醒空窗期发出的消息会自动重发", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  let attempts = 0;
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    attempts += 1;
+    if (attempts < 3) throw new Error(UNREACHABLE);
+    return { success: true, echoed: message.action };
+  };
+
+  const result = await ctx.sendToBackground({ action: "getNotes" });
+
+  assert.equal(attempts, 3);
+  assert.deepEqual(result, { success: true, echoed: "getNotes" });
+});
+
+test("通道中断后写操作不重发，避免重复扣费或多存一条笔记", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  let attempts = 0;
+  ctx.chrome.runtime.sendMessage = async () => {
+    attempts += 1;
+    throw new Error(PORT_CLOSED);
+  };
+
+  await assert.rejects(() => ctx.sendToBackground({ action: "saveNote" }));
+  assert.equal(
+    attempts,
+    1,
+    "通道断开只说明没收到回复，后台可能已经执行过了，写操作重发会做第二遍",
+  );
+});
+
+test("通道中断后只读操作仍会重发", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  let attempts = 0;
+  ctx.chrome.runtime.sendMessage = async () => {
+    attempts += 1;
+    throw new Error(PORT_CLOSED);
+  };
+
+  await assert.rejects(() =>
+    ctx.sendToBackground({ action: "getNotes" }, { idempotent: true }),
+  );
+  assert.equal(attempts, 3);
+});
+
+test("业务错误原样抛出，不做无谓重试", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  let attempts = 0;
+  ctx.chrome.runtime.sendMessage = async () => {
+    attempts += 1;
+    throw new Error("这条笔记已经不存在了。");
+  };
+
+  await assert.rejects(() => ctx.sendToBackground({ action: "deleteNote" }));
+  assert.equal(attempts, 1);
+});
+
+test("后台始终不可达时，不再把它伪装成字幕失败", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = "BV1xx411c7mD";
+  ctx.chrome.runtime.sendMessage = async () => {
+    throw new Error(UNREACHABLE);
+  };
+
+  await ctx.loadTranscript();
+
+  assert.equal(ctx.el("errorTitle").textContent, "扩展后台未响应");
+  assert.match(
+    ctx.el("errorText").textContent,
+    /与 B 站账号、AI 密钥和网络都无关/,
+    "用户会照着提示去折腾密钥和梯子，必须先把这条路堵死",
+  );
+  assert.doesNotMatch(
+    ctx.el("errorText").textContent,
+    /Receiving end does not exist/,
+    "浏览器的英文原文对用户没有任何指导意义",
+  );
+  assert.equal(ctx.el("errorLoginLink").hidden, true);
+});
 
 // ============================================================
 // 缓存里已有的结果要自动摆出来
@@ -435,12 +534,66 @@ test("取消重新生成时恢复上一次概览，不让已有结果消失", as
   assert.match(ctx.el("overviewMeta").textContent, /保留上次结果/);
 });
 
+test("笔记卡片始终标出 UP 主，标题只在别的视频上出现", () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = NOTE.bvid;
+  ctx.state.page = NOTE.page;
+  const current = ctx.renderNoteCard(NOTE);
+  assert.equal(findByClass(current, "note-source-owner").textContent, "别的 UP");
+  assert.equal(findByClass(current, "note-source-title"), null);
+
+  ctx.state.bvid = "BV1xx411c7mD";
+  const away = ctx.renderNoteCard(NOTE);
+  assert.equal(findByClass(away, "note-source-title").textContent, "另一个视频");
+  assert.equal(findByClass(away, "note-source-owner").textContent, "别的 UP");
+});
+
+test("失败块会显示补入口，点击只发补失败块请求", async () => {
+  const ctx = createContext({
+    transcript: transcriptResult({
+      analysis: ANALYSIS,
+      analysisFailures: [{ index: 1, startSeconds: 300, endSeconds: 600 }],
+    }),
+  });
+  ctx.state.bvid = "BV1xx411c7mD";
+  await ctx.loadTranscript();
+  assert.equal(ctx.el("retryFailedChunksBtn").hidden, false);
+  assert.match(ctx.el("overviewMeta").textContent, /1 块失败/);
+
+  const original = ctx.chrome.runtime.sendMessage;
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    if (message.action === "startAiTask") {
+      return { success: true, task: { id: message.taskId, state: "running" } };
+    }
+    if (message.action === "retryFailedAnalysis") {
+      return {
+        success: true,
+        analysis: {
+          ...ANALYSIS,
+          chapters: [
+            ...ANALYSIS.chapters,
+            { timestamp: "5:00", timestampSeconds: 300, title: "后半", summary: "补上" },
+          ],
+        },
+        analysisFailures: [],
+      };
+    }
+    return original(message);
+  };
+
+  await ctx.analyze({ retryFailed: true });
+  assert.equal(ctx.el("retryFailedChunksBtn").hidden, true);
+  assert.match(ctx.el("overviewMeta").textContent, /2 章节/);
+  assert.doesNotMatch(ctx.el("overviewMeta").textContent, /失败/);
+});
+
 test("侧边栏只保留顶部全局设置入口，不在功能菜单重复跳转", () => {
   const html = fs.readFileSync(path.join(ROOT, "sidepanel.html"), "utf8");
   assert.match(html, /id=["']cancelAnalysisBtn["']/);
   assert.match(html, /id=["']rewriteStopBtn["']/);
   assert.match(html, /id=["']optionsBtn["']/);
   assert.match(html, /id=["']reanalyzeBtn["']/);
+  assert.match(html, /id=["']retryFailedChunksBtn["']/);
   assert.doesNotMatch(html, /id=["']overviewGenerateMenu["']/);
   assert.doesNotMatch(html, /id=["']overviewSettingsBtn["']/);
   assert.doesNotMatch(html, /id=["']transcriptSettingsBtn["']/);
@@ -1306,6 +1459,25 @@ test("「全部」范围导出用固定文件名，且不提供学习稿", () =>
   ctx.state.notesScope = "video";
   ctx.renderNotes([NOTE]);
   assert.equal(ctx.el("exportLearningBtn").hidden, false);
+});
+
+test("笔记搜索过滤当前列表，导出也只含匹配项", () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.notesScope = "video";
+  ctx.renderNotes([
+    NOTE,
+    { ...NOTE, id: "other", text: "另一条关于结构", videoTitle: "第二课" },
+  ]);
+  ctx.applyNotesSearch("结构");
+  assert.match(ctx.el("notesCount").textContent, /1\//);
+  assert.equal(ctx.el("notesEmpty").hidden, true);
+
+  ctx.exportNotes();
+  assert.equal(ctx.downloads.length, 1);
+  assert.equal(ctx.downloads[0].download, "第二课-笔记.md");
+
+  ctx.applyNotesSearch("没有这种内容");
+  assert.equal(ctx.el("notesEmptyTitle").textContent, "没有匹配的笔记");
 });
 
 test("学习稿会拉取当前视频笔记并写成 Markdown 文件名", async () => {

@@ -369,6 +369,17 @@ test("小数被向下取整", () => {
   assert.equal(settings.normalize({ aiConcurrency: 3.9 }).aiConcurrency, 3);
 });
 
+test("界面字号按百分比自调，越界会夹回范围内", () => {
+  assert.equal(settings.normalize({}).uiFontScale, 100);
+  assert.equal(settings.normalize({ uiFontScale: 130 }).uiFontScale, 130);
+  assert.equal(settings.normalize({ uiFontScale: 10 }).uiFontScale, 80);
+  assert.equal(settings.normalize({ uiFontScale: 999 }).uiFontScale, 160);
+  assert.equal(settings.normalize({ uiFontSize: "large" }).uiFontScale, 115);
+  const root = { style: { setProperty(name, value) { this[name] = value; } } };
+  assert.equal(settings.applyUiFontScale(130, root), 130);
+  assert.equal(root.style["--ui-font-zoom"], "1.3");
+});
+
 test("概览分块模式默认自动，并只接受自动、较短、较长三种值", () => {
   assert.equal(settings.normalize({}).analysisChunkMode, "auto");
   assert.equal(settings.normalize({ analysisChunkMode: "short" }).analysisChunkMode, "short");

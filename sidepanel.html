@@ -178,7 +178,7 @@
       </div>
 
       <div id="overviewLoading" class="state" hidden>
-        <p class="state-title">正在生成概览…</p>
+        <p class="state-title" id="overviewLoadingTitle">正在生成概览…</p>
         <p class="state-text" id="overviewProgressText">正在准备…</p>
         <div class="progress" role="progressbar" aria-labelledby="overviewProgressText">
           <div class="progress-bar" id="overviewProgressBar"></div>
@@ -202,6 +202,7 @@
                 <button type="button" data-learning-export="transcript">学习稿（含字幕）</button>
               </div>
             </details>
+            <button id="retryFailedChunksBtn" class="ghost-btn" type="button" hidden title="只补生成失败的时间段，不必整份重来">补失败块</button>
             <button id="reanalyzeBtn" class="ghost-btn" type="button">重新生成</button>
           </div>
         </div>
@@ -232,6 +233,10 @@
             </div>
           </details>
         </div>
+      </div>
+      <div id="notesSearchRow" class="search-row">
+        <input id="notesSearchInput" class="search-input" type="search" placeholder="搜索笔记、标题或 UP 主" autocomplete="off" />
+        <span id="notesSearchCount" class="muted"></span>
       </div>
       <div id="notesList" class="notes-list"></div>
       <div id="notesEmpty" class="state" hidden>

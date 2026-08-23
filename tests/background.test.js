@@ -56,6 +56,8 @@ function createBackground({
       aiTimeoutSeconds: 30,
     };
   }
+  const cacheStore = {};
+  if (cached) cacheStore[`${BVID}:1`] = structuredClone(cached);
   let messageListener;
   const broadcasts = [];
   const context = {
@@ -75,13 +77,17 @@ function createBackground({
       }
       if (aiReply !== null) {
         const reply =
-          typeof aiReply === "function" ? await aiReply({ url, options }) : String(aiReply);
+          typeof aiReply === "function" ? await aiReply({ url, options }) : aiReply;
+        const content =
+          reply && typeof reply === "object"
+            ? JSON.stringify(reply)
+            : JSON.stringify({ quote: String(reply) });
         return {
           ok: true,
           status: 200,
           text: async () =>
             JSON.stringify({
-              choices: [{ message: { content: JSON.stringify({ quote: reply }) } }],
+              choices: [{ message: { content } }],
             }),
         };
       }
@@ -95,6 +101,7 @@ function createBackground({
         getURL: (value) => value,
         openOptionsPage() {},
         onInstalled: { addListener() {} },
+        onStartup: { addListener() {} },
         onMessage: {
           addListener(listener) {
             messageListener = listener;
@@ -110,8 +117,14 @@ function createBackground({
     BILI_CONCURRENCY: CONCURRENCY,
     BILI_TRANSCRIPT: TRANSCRIPT,
     BILI_CACHE: {
-      load: async () => (cached ? structuredClone(cached) : null),
-      save: async () => true,
+      load: async (bvid, { page = 1 } = {}) => {
+        const key = `${bvid}:${page}`;
+        return cacheStore[key] ? structuredClone(cacheStore[key]) : null;
+      },
+      save: async (bvid, data, { page = 1 } = {}) => {
+        cacheStore[`${bvid}:${page}`] = structuredClone(data);
+        return true;
+      },
     },
     BILI_API: {
       parseBvid: (value) => (String(value || "").includes("BV") ? BVID : null),
@@ -130,7 +143,7 @@ function createBackground({
 
   async function send(message) {
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("消息没有回复")), 1000);
+      const timeout = setTimeout(() => reject(new Error("消息没有回复")), 8000);
       messageListener(message, {}, (result) => {
         clearTimeout(timeout);
         resolve(result);
@@ -140,6 +153,54 @@ function createBackground({
 
   return { storage, send, broadcasts };
 }
+
+// MV3 只为「正在处理的事件」保活 service worker。顶层发起的异步调用一旦
+// 在求值结束后仍未返回，worker 会被直接回收，Chromium 报 `No SW`——
+// 表现就是侧边栏永远够不着后台。所以启动阶段不许碰存储。
+test("service worker 启动时不读存储，迁移等到真正用数据时才跑", async () => {
+  const storage = memoryStorage({});
+  const reads = [];
+  const originalGet = storage.get.bind(storage);
+  storage.get = async (key) => {
+    reads.push(key);
+    return originalGet(key);
+  };
+
+  const ctx = createBackground({ storage });
+
+  assert.deepEqual(reads, [], "顶层异步没有 keepalive 保护，会被回收打断");
+
+  await ctx.send({ action: "getNotes", bvid: BVID, page: 1 });
+
+  assert.equal(reads[0], LEARNING_STORE.META_KEY, "真正要用笔记时才迁移");
+});
+
+test("迁移失败后不会卡在降级状态，下一次操作会重试", async () => {
+  const storage = memoryStorage({});
+  let metaReads = 0;
+  let failNext = true;
+  const originalGet = storage.get.bind(storage);
+  storage.get = async (key) => {
+    if (key === LEARNING_STORE.META_KEY) {
+      metaReads += 1;
+      if (failNext) {
+        failNext = false;
+        throw new Error("No SW");
+      }
+    }
+    return originalGet(key);
+  };
+
+  const ctx = createBackground({ storage });
+  await ctx.send({ action: "getNotes", bvid: BVID, page: 1 });
+  await ctx.send({ action: "getNotes", bvid: BVID, page: 1 });
+
+  assert.equal(metaReads, 2, "一次偶发失败不该让这条 worker 上的后续操作一直降级");
+  assert.equal(
+    storage.data[LEARNING_STORE.META_KEY].schemaVersion,
+    LEARNING_STORE.SCHEMA_VERSION,
+  );
+});
 
 test("后台任务协议拒绝同目标重复任务，并支持查询与取消", async () => {
   const ctx = createBackground();
@@ -260,6 +321,67 @@ test("本视频笔记按 BV 号和分 P 精确关联", async () => {
 
   assert.equal(result.notes.length, 1);
   assert.equal(result.notes[0].id, "p2");
+});
+
+test("导出备份不含设置密钥，导入按较新时间合并", async () => {
+  const learningKey = LEARNING_STORE.learningKey(BVID, 1);
+  const ctx = createBackground({
+    initial: {
+      [SETTINGS.STORAGE_KEY]: { aiApiKey: "sk-secret" },
+      [LEARNING_STORE.NOTES_KEY]: [
+        { id: "local", bvid: BVID, text: "本机独有", updatedAt: 1000 },
+        { id: "shared", bvid: BVID, text: "本机旧文", updatedAt: 1000 },
+      ],
+      [learningKey]: {
+        learningId: `${BVID}:p1`,
+        bvid: BVID,
+        page: 1,
+        analysis: { chapters: [{ title: "旧章" }] },
+        updatedAt: 1000,
+      },
+    },
+  });
+
+  const exported = await ctx.send({ action: "exportLearningBackup" });
+  assert.equal(exported.success, true);
+  assert.equal(exported.backup.kind, LEARNING_STORE.BACKUP_KIND);
+  assert.doesNotMatch(JSON.stringify(exported.backup), /sk-secret/);
+
+  const imported = await ctx.send({
+    action: "importLearningBackup",
+    backup: {
+      kind: LEARNING_STORE.BACKUP_KIND,
+      schemaVersion: 2,
+      notes: [{ id: "shared", bvid: BVID, text: "备份新文", updatedAt: 9000 }],
+      learning: [
+        {
+          learningId: `${BVID}:p1`,
+          bvid: BVID,
+          page: 1,
+          analysis: { chapters: [{ title: "新章" }] },
+          updatedAt: 9000,
+        },
+      ],
+    },
+  });
+  assert.equal(imported.success, true);
+  assert.equal(imported.notesAdded, 0);
+  assert.equal(imported.notesUpdated, 1);
+  const notes = ctx.storage.data[LEARNING_STORE.NOTES_KEY];
+  assert.equal(notes.find((note) => note.id === "local").text, "本机独有");
+  assert.equal(notes.find((note) => note.id === "shared").text, "备份新文");
+  assert.equal(ctx.storage.data[learningKey].analysis.chapters[0].title, "新章");
+  assert.equal(ctx.storage.data[SETTINGS.STORAGE_KEY].aiApiKey, "sk-secret");
+});
+
+test("拒绝无法识别的备份文件", async () => {
+  const ctx = createBackground();
+  const result = await ctx.send({
+    action: "importLearningBackup",
+    backup: { notes: [] },
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.error, "INVALID_BACKUP");
 });
 
 test("笔记正文可以更新，并记录更新时间", async () => {
@@ -611,4 +733,58 @@ test("字幕缓存没有概览时，会恢复长期保存的概览", async () =>
   assert.equal(result.success, true);
   assert.deepEqual(result.analysis, analysis);
   assert.equal(result.analysisSource, "learning");
+});
+
+test("部分概览分块失败会保存失败区间，补失败块只请求失败段", async () => {
+  const segments = Array.from({ length: 40 }, (_, index) => ({
+    id: `s${index}`,
+    start: index * 30,
+    text: "字".repeat(300),
+  }));
+  let failSecond = true;
+  const requestedRanges = [];
+  const ctx = createBackground({
+    cached: {
+      transcript: [{ from: 0, to: 1, content: "字幕" }],
+      segments,
+      videoInfo: { title: "标题", owner: "UP 主", duration: 1200 },
+    },
+    aiReply: ({ options }) => {
+      const blob = JSON.stringify(JSON.parse(options.body).messages);
+      const second = /第 2 \//.test(blob);
+      requestedRanges.push(second ? 2 : 1);
+      if (second && failSecond) throw new Error("第二块失败");
+      return {
+        chapters: [
+          {
+            title: second ? "后半" : "前半",
+            timestampSeconds: second ? 610 : 10,
+            summary: "摘要",
+          },
+        ],
+        keyQuotes: [],
+      };
+    },
+  });
+
+  const first = await ctx.send({ action: "analyzeTranscript", bvid: BVID, page: 1 });
+  assert.equal(first.success, true, JSON.stringify(first));
+  assert.equal(first.failedChunks, 1);
+  assert.equal(first.analysis.chapters[0].title, "前半");
+  assert.equal(first.analysisFailures.length, 1);
+  assert.ok(first.analysisFailures[0].startSeconds > 0);
+  const learning = ctx.storage.data[LEARNING_STORE.learningKey(BVID, 1)];
+  assert.equal(learning.analysisFailures.length, 1);
+
+  failSecond = false;
+  requestedRanges.length = 0;
+  const retried = await ctx.send({ action: "retryFailedAnalysis", bvid: BVID, page: 1 });
+  assert.equal(retried.success, true, JSON.stringify(retried));
+  assert.deepEqual(requestedRanges, [2], "补失败块应只打失败段");
+  assert.deepEqual(
+    retried.analysis.chapters.map((chapter) => chapter.title),
+    ["前半", "后半"],
+  );
+  assert.equal(retried.failedChunks, 0);
+  assert.equal(ctx.storage.data[LEARNING_STORE.learningKey(BVID, 1)].analysisFailures, undefined);
 });

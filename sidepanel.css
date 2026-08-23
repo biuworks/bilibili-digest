@@ -48,6 +48,14 @@
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 }
 
+html {
+  --ui-font-zoom: 1;
+}
+
+html body {
+  zoom: var(--ui-font-zoom);
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #17181a;
@@ -1154,10 +1162,35 @@ button {
   background: var(--danger-soft);
 }
 
-.note-meta {
+.note-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
   margin: 6px 0 0;
-  font-size: 11px;
+}
+
+.note-source-title {
+  min-width: 0;
+  font-size: 12px;
   color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-source-owner {
+  flex: 0 0 auto;
+  max-width: 100%;
+  padding: 1px 7px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  background: var(--bg-active);
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .note-notice {

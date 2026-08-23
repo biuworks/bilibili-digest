@@ -16,6 +16,7 @@ const fields = {
   timeout: document.getElementById("aiTimeoutSeconds"),
   chunkMode: document.getElementById("analysisChunkMode"),
   overlapChars: document.getElementById("analysisOverlapChars"),
+  uiFontScale: document.getElementById("uiFontScale"),
 };
 const customFields = document.getElementById("customFields");
 const presetHint = document.getElementById("presetHint");
@@ -65,6 +66,7 @@ function currentSettings() {
     aiTimeoutSeconds: fields.timeout.value,
     analysisChunkMode: fields.chunkMode.value,
     analysisOverlapChars: fields.overlapChars.value,
+    uiFontScale: fields.uiFontScale.value,
   });
 }
 
@@ -132,7 +134,7 @@ function showModelOptions(models) {
 
   const manual = document.createElement("option");
   manual.value = "";
-  manual.textContent = "手动填写模型名…";
+  manual.textContent = "手动填写模型名称…";
   modelOptions.appendChild(manual);
 
   modelOptions.value = currentModel;
@@ -155,6 +157,8 @@ async function load() {
   fields.timeout.value = settings.aiTimeoutSeconds;
   fields.chunkMode.value = settings.analysisChunkMode;
   fields.overlapChars.value = settings.analysisOverlapChars;
+  fields.uiFontScale.value = settings.uiFontScale;
+  BILI_SETTINGS.applyUiFontScale(settings.uiFontScale);
 
   const preset = BILI_SETTINGS.presetById(settings.presetId);
   if (preset?.docsUrl) applyPresetHintOnly(preset);
@@ -209,7 +213,7 @@ async function save() {
     return false;
   }
   if (!granted) {
-    showStatus(`没有拿到访问 ${origin} 的权限，AI 功能会用不了。`, {
+    showStatus(`未获得 ${origin} 的访问权限，AI 功能将无法使用。`, {
       sticky: true,
     });
     return false;
@@ -221,6 +225,7 @@ async function save() {
   fields.timeout.value = settings.aiTimeoutSeconds;
   fields.chunkMode.value = settings.analysisChunkMode;
   fields.overlapChars.value = settings.analysisOverlapChars;
+  fields.uiFontScale.value = settings.uiFontScale;
   showStatus("已保存并授权");
   return true;
 }
@@ -248,18 +253,18 @@ async function fetchModels() {
     return;
   }
   if (!(await ensurePermissionInteractive(settings))) {
-    showStatus("需要授权才能访问该地址。", { sticky: true });
+    showStatus("需获得授权后才能访问该地址。", { sticky: true });
     return;
   }
 
-  showStatus("正在拉取模型列表…", { sticky: true });
+  showStatus("正在获取模型列表…", { sticky: true });
   try {
     const request = BILI_AI_PROVIDER.buildModelsRequest(settings);
     const response = await fetch(request.url, { headers: request.headers });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       showStatus(
-        `拉取失败：${BILI_AI_PROVIDER.parseErrorMessage(data, response.status)}`,
+        `获取失败：${BILI_AI_PROVIDER.parseErrorMessage(data, response.status)}`,
         { sticky: true },
       );
       return;
@@ -267,17 +272,17 @@ async function fetchModels() {
 
     const models = BILI_AI_PROVIDER.parseModelsResponse(data);
     if (!models.length) {
-      showStatus("服务没有返回模型列表，请手动填写模型名。", { sticky: true });
+      showStatus("服务未返回模型列表，请手动填写模型名称。", { sticky: true });
       return;
     }
 
     // 还没填模型时顺手填第一个，省得用户再去翻列表。
     if (!fields.model.value) fields.model.value = models[0];
     showModelOptions(models);
-    modelsHint.textContent = `拿到 ${models.length} 个模型；可直接选择，或切换到手动填写。`;
+    modelsHint.textContent = `已获取 ${models.length} 个模型，可直接选择或切换为手动填写。`;
     showStatus("模型列表已更新");
   } catch (error) {
-    showStatus(`拉取失败：${error.message}。请检查地址和网络。`, { sticky: true });
+    showStatus(`获取失败：${error.message}。请检查接口地址与网络连接。`, { sticky: true });
   }
 }
 
@@ -289,11 +294,11 @@ async function testConnection() {
     return;
   }
   if (!(await ensurePermissionInteractive(settings))) {
-    showStatus("需要授权才能访问该地址。", { sticky: true });
+    showStatus("需获得授权后才能访问该地址。", { sticky: true });
     return;
   }
 
-  showStatus("正在测试…", { sticky: true });
+  showStatus("正在测试连接…", { sticky: true });
   try {
     const request = BILI_AI_PROVIDER.buildChatRequest({
       settings,
@@ -308,7 +313,7 @@ async function testConnection() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       showStatus(
-        `失败：${BILI_AI_PROVIDER.parseErrorMessage(data, response.status)}`,
+        `测试失败：${BILI_AI_PROVIDER.parseErrorMessage(data, response.status)}`,
         { sticky: true },
       );
       return;
@@ -316,11 +321,81 @@ async function testConnection() {
 
     const text = BILI_AI_PROVIDER.parseChatResponse(settings.protocol, data);
     showStatus(
-      text.trim() ? `连接正常，模型回复：${text.trim().slice(0, 30)}` : "连接正常，但返回为空。",
+      text.trim() ? `连接正常，模型返回：${text.trim().slice(0, 30)}` : "连接正常，但返回内容为空。",
       { sticky: true },
     );
   } catch (error) {
-    showStatus(`失败：${error.message}。请检查地址、协议和网络。`, { sticky: true });
+    showStatus(`测试失败：${error.message}。请检查接口地址、协议与网络连接。`, { sticky: true });
+  }
+}
+
+function showBackupStatus(text, { sticky = false } = {}) {
+  const node = document.getElementById("backupStatus");
+  node.textContent = text;
+  clearTimeout(statusTimer);
+  if (!sticky) {
+    statusTimer = setTimeout(() => {
+      node.textContent = "";
+    }, 4000);
+  }
+}
+
+function downloadJson(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], {
+    type: "application/json;charset=utf-8",
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function exportBackup() {
+  try {
+    const result = await chrome.runtime.sendMessage({ action: "exportLearningBackup" });
+    if (!result?.success || !result.backup) {
+      showBackupStatus(result?.message || "导出失败。", { sticky: true });
+      return;
+    }
+    downloadJson(result.backup, "bilibili-digest-backup.json");
+    showBackupStatus(
+      `已导出 ${result.backup.notes.length} 条笔记、${result.backup.learning.length} 份概览。`,
+    );
+  } catch (error) {
+    showBackupStatus(`导出失败：${error.message}`, { sticky: true });
+  }
+}
+
+async function importBackupFromFile(event) {
+  const file = event.target.files?.[0];
+  event.target.value = "";
+  if (!file) return;
+  let payload;
+  try {
+    payload = JSON.parse(await file.text());
+  } catch (error) {
+    showBackupStatus("无法解析该文件，请确认为本扩展导出的 JSON 备份。", { sticky: true });
+    return;
+  }
+  if (!window.confirm("确认将备份合并至本机数据？相同条目以更新时间较新者为准，本机独有的笔记不会被删除，API 密钥不受影响。")) {
+    return;
+  }
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: "importLearningBackup",
+      backup: payload,
+    });
+    if (!result?.success) {
+      showBackupStatus(result?.message || "恢复失败。", { sticky: true });
+      return;
+    }
+    showBackupStatus(
+      `合并完成：新增 ${result.notesAdded} 条笔记，更新 ${result.notesUpdated} 条。`,
+    );
+  } catch (error) {
+    showBackupStatus(`恢复失败：${error.message}`, { sticky: true });
   }
 }
 
@@ -347,11 +422,30 @@ modelOptions.addEventListener("change", () => {
 document.getElementById("saveBtn").addEventListener("click", save);
 document.getElementById("fetchModelsBtn").addEventListener("click", fetchModels);
 document.getElementById("testBtn").addEventListener("click", testConnection);
+document.getElementById("backupExportBtn").addEventListener("click", exportBackup);
+document.getElementById("backupImportBtn").addEventListener("click", () => {
+  document.getElementById("backupImportInput").click();
+});
+document.getElementById("backupImportInput").addEventListener("change", importBackupFromFile);
 
 for (const input of [fields.baseUrl, fields.apiKey, fields.model]) {
   input.addEventListener("keydown", (event) => {
     if (event.key === "Enter") save();
   });
 }
+
+async function saveUiFontScale() {
+  const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+  const settings = BILI_SETTINGS.normalize({
+    ...stored[BILI_SETTINGS.STORAGE_KEY],
+    uiFontScale: fields.uiFontScale.value,
+  });
+  fields.uiFontScale.value = settings.uiFontScale;
+  await chrome.storage.local.set({ [BILI_SETTINGS.STORAGE_KEY]: settings });
+  BILI_SETTINGS.applyUiFontScale(settings.uiFontScale);
+}
+
+fields.uiFontScale.addEventListener("change", saveUiFontScale);
+fields.uiFontScale.addEventListener("input", saveUiFontScale);
 
 load();

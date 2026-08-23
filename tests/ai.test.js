@@ -407,6 +407,44 @@ test("部分块为空或畸形时，合并仍然产出其余块的结果", () =>
   assert.deepEqual(AI.mergeAnalyses(null, 600).chapters, []);
 });
 
+test("失败区间能对回当前分块，补进去时覆盖该时段旧条目", () => {
+  const chunks = AI.planAnalysisChunks(makeAnalysisSegments(40, 300), { maxChars: 6000 });
+  assert.ok(chunks.length >= 2);
+  const failed = AI.chunkFailureRanges(chunks, [
+    { status: "fulfilled", value: {} },
+    { status: "rejected", reason: new Error("限流") },
+  ]);
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0].index, 1);
+  assert.deepEqual(
+    AI.chunksForFailureRanges(chunks, failed).map((chunk) => chunk.index),
+    [1],
+  );
+
+  const merged = AI.mergeRetryIntoAnalysis(
+    {
+      chapters: [
+        { title: "保留", timestampSeconds: 10, timestamp: "0:10" },
+        { title: "旧的后半", timestampSeconds: failed[0].startSeconds, timestamp: "x" },
+      ],
+      keyQuotes: [],
+    },
+    [
+      {
+        chapters: [
+          { title: "新的后半", timestampSeconds: failed[0].startSeconds + 5, timestamp: "y" },
+        ],
+      },
+    ],
+    failed,
+    2000,
+  );
+  assert.deepEqual(
+    merged.chapters.map((chapter) => chapter.title),
+    ["保留", "新的后半"],
+  );
+});
+
 // ============================================================
 // 金句归类到章节
 // ============================================================

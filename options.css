@@ -35,6 +35,14 @@
   --dur: 160ms;
 }
 
+html {
+  --ui-font-zoom: 1;
+}
+
+html body {
+  zoom: var(--ui-font-zoom);
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #17181a;
