@@ -1096,10 +1096,15 @@ button {
   display: block;
 }
 
-.qa-citations-label {
+.qa-citations-summary {
+  cursor: pointer;
   font-size: 11px;
   color: var(--text-muted);
   margin: 2px 0 6px;
+}
+
+.qa-citations[open] .qa-citations-summary {
+  margin-bottom: 10px;
 }
 
 .qa-citation-row {

@@ -1618,13 +1618,14 @@ function renderQaCard(entry) {
   }
   appendAnswerText(answer, entry.answer, entry.clickable);
 
-  const citations = document.createElement("div");
+  const citations = document.createElement("details");
   citations.className = "note-source qa-citations";
-  // 没有标签的引用原句会被当成莫名其妙的复读——说明这是回答的依据。
-  const citationsLabel = document.createElement("div");
-  citationsLabel.className = "qa-citations-label";
-  citationsLabel.textContent = "字幕依据（点击时间戳跳转）";
-  citations.appendChild(citationsLabel);
+  // 折叠形态：内联时间戳已可点击，依据原句留给想核对的人展开看。
+  const citationsSummary = document.createElement("summary");
+  citationsSummary.className = "qa-citations-summary";
+  const citationCount = (entry.citations || []).length;
+  citationsSummary.textContent = `字幕依据 · ${citationCount} 条`;
+  citations.appendChild(citationsSummary);
   for (const citation of entry.citations || []) {
     const row = document.createElement("div");
     row.className = "qa-citation-row";

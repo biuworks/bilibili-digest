@@ -1703,14 +1703,12 @@ test("问答卡片只有复制操作，且有成功反馈", async () => {
   const actions = card.children.find((child) => child.className === "entry-actions");
   assert.equal(actions.children.length, 1, "只保留复制按钮");
 
-  // 引用区要有「字幕依据」标签，否则原句会被当成莫名其妙的复读。
+  // 引用区折叠为一行摘要，展开才能看到原句。
   const citationsNode = card.children.find(
     (child) => child.className === "note-source qa-citations",
   );
-  assert.equal(
-    citationsNode.children[0].textContent,
-    "字幕依据（点击时间戳跳转）",
-  );
+  assert.equal(citationsNode.tagName, "details");
+  assert.equal(citationsNode.children[0].textContent, "字幕依据 · 1 条");
 
   await actions.children[0].dispatch("click");
   await new Promise((resolve) => setTimeout(resolve, 0));
