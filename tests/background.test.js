@@ -10,6 +10,7 @@ const TRANSCRIPT = require("../lib/transcript.js");
 const AI = require("../lib/ai.js");
 const SETTINGS = require("../settings.js");
 const AI_PROVIDER = require("../lib/ai-provider.js");
+const AI_TRANSPORT = require("../lib/ai-transport.js");
 const TASKS = require("../lib/task-manager.js");
 const NOTE_DB = require("../lib/note-db.js");
 const IDB = require("../lib/idb.js");
@@ -120,6 +121,7 @@ function createBackground({
     BILI_SETTINGS: SETTINGS,
     BILI_AI: AI,
     BILI_AI_PROVIDER: AI_PROVIDER,
+    BILI_AI_TRANSPORT: AI_TRANSPORT,
     BILI_TASKS: TASKS,
     BILI_NOTE_DB: NOTE_DB,
     BILI_IDB: IDB,
