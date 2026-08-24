@@ -248,7 +248,7 @@ https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
 - [ ] 已 `git push`，GitHub 上的 `PRIVACY.md` 与本次安装包一致。
 - [ ] 更新 `manifest.json` 版本号和本文件的发布状态。
 - [ ] `npm test` 全部通过。
-- [ ] `npm run package` 得到 `dist/digest-for-bilibili-0.3.0.zip`。
+- [ ] `npm run package` 得到 `dist/digest-for-bilibili-0.4.0.zip`。
 - [ ] ZIP 顶层直接包含 `manifest.json`。
 - [ ] ZIP 不包含测试、截图、README、隐私政策或本文件。
 - [ ] 同一个解压包分别在 Chrome 与 Edge 中旁加载验证。
