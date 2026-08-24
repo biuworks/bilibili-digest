@@ -137,6 +137,62 @@ test("输出被截断时按四倍放大预算，直到天花板", async () => {
   );
 });
 
+// ============================================================
+// 截断 body 自愈
+// ============================================================
+
+test("body 被掐断在字符串中间时补齐解析，保住已到达的内容", async () => {
+  const t = makeTransport(async () => ({
+    ok: true,
+    status: 200,
+    text: async () =>
+      '{"choices": [{"message": {"content": "模型说到一半就被掐',
+  }));
+  const result = await t.requestAiCompletion({
+    messages: MESSAGES,
+    maxTokens: 100,
+  });
+  assert.equal(result.text, "模型说到一半就被掐");
+});
+
+test("body 掐在嵌套结构中间时同样补齐", async () => {
+  const t = makeTransport(async () => ({
+    ok: true,
+    status: 200,
+    text: async () =>
+      '{"choices": [{"message": {"content": "[0:02] 引用", "role": "assist',
+  }));
+  const result = await t.requestAiCompletion({
+    messages: MESSAGES,
+    maxTokens: 100,
+  });
+  assert.equal(result.text, "[0:02] 引用");
+});
+
+test("完全修不动的 body 报 AI_RESPONSE_TRUNCATED 而不是生硬的 V8 错误", async () => {
+  const t = makeTransport(async () => ({
+    ok: true,
+    status: 200,
+    text: async () => "这不是 JSON 也不是截断的 JSON",
+  }));
+  await assert.rejects(
+    () => t.requestAiCompletion({ messages: MESSAGES, maxTokens: 100 }),
+    { code: "AI_RESPONSE_TRUNCATED" },
+  );
+});
+
+test("repairTruncatedJson 直接导出且行为正确", () => {
+  assert.equal(
+    TRANSPORT.repairTruncatedJson('{"a": "x\\'),
+    '{"a": "x"}',
+    "孤立反斜杠不转义补上的引号",
+  );
+  assert.equal(
+    TRANSPORT.repairTruncatedJson('{"a": [1, {"b": "c"'),
+    '{"a": [1, {"b": "c"}]}',
+  );
+});
+
 test("预算已到天花板就不再加码，两轮后放弃", async () => {
   const requests = [];
   const t = makeTransport(async (url, { body } = {}) => {

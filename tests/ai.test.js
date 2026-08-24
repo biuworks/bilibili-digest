@@ -87,6 +87,26 @@ test("容忍数组或对象末尾多出来的逗号", () => {
   assert.deepEqual(AI.parseLooseJson('{"a":[1,2,],}'), { a: [1, 2] });
 });
 
+test("修复被截断的 JSON：字符串与括号停在半路", () => {
+  assert.deepEqual(
+    AI.parseLooseJson('{"answer": "你好 [0:02'),
+    { answer: "你好 [0:02" },
+  );
+  assert.deepEqual(AI.parseLooseJson('{"a": [1, 2'), { a: [1, 2] });
+  assert.deepEqual(AI.parseLooseJson('{"a": {"b": "c"'), { a: { b: "c" } });
+});
+
+test("修复被截断的 JSON：末尾孤立反斜杠不转义补上的引号", () => {
+  assert.deepEqual(AI.parseLooseJson('{"a": "abc\\'), { a: "abc" });
+});
+
+test("修复被截断的 JSON：字符串内的引号转义不受影响", () => {
+  assert.deepEqual(
+    AI.parseLooseJson('{"a": "他说 \\"hi\\" 然后'),
+    { a: '他说 "hi" 然后' },
+  );
+});
+
 test("完全不是 JSON 时才抛错", () => {
   assert.throws(() => AI.parseLooseJson("这不是 JSON"));
 });
