@@ -1018,13 +1018,15 @@ button {
   overflow-wrap: anywhere;
 }
 
-/* 搜索命中高亮：品牌粉的浅底而不是默认黄，跟暖纸面同一个色族 */
+/* 搜索命中高亮（字幕与笔记同一套）：品牌粉浅底 + 全对比度文字，
+   命中词要从 muted 正文里跳出来 */
 .entry-text mark,
-.note-source mark {
-  background: var(--accent-soft-strong);
-  color: inherit;
-  border-radius: 3px;
+.note-source mark,
+.search-hit {
   padding: 0 1px;
+  color: var(--text);
+  background: var(--accent-soft-strong);
+  border-radius: 3px;
 }
 
 .quote .entry-text {
