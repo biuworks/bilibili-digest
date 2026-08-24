@@ -165,6 +165,47 @@ test("importScripts 的加载顺序满足模块间依赖", () => {
   }
 });
 
+/**
+ * 页面脚本依赖的 lib 全局（BILI_XXX）由 HTML 的 <script> 标签提供。
+ * 漏挂标签不会报打包错，只会在用户点到对应功能时抛
+ * `XXX is not defined`——问答页首日就踩过这个坑。
+ */
+test("页面脚本引用的全局模块都有对应的 script 标签", () => {
+  // BILI_QA_CITATIONS -> qa-citations.js；设置模块是根目录的特例。
+  const globalToFile = (name) =>
+    name === "BILI_SETTINGS"
+      ? "settings.js"
+      : `${name.slice(5).toLowerCase().replace(/_/g, "-")}.js`;
+
+  for (const page of ["sidepanel.html", "options.html"]) {
+    const html = readText(page);
+    const pageDir = path.dirname(page);
+    const scripts = [...html.matchAll(/<script src="([^"]+)"/g)].map(
+      (match) => match[1],
+    );
+    const loadedFiles = new Set(
+      scripts.map((file) => path.posix.normalize(path.join(pageDir, file)).split("/").pop()),
+    );
+
+    const referencedGlobals = new Set();
+    for (const file of scripts) {
+      if (!file.endsWith(".js")) continue;
+      const source = readText(path.posix.normalize(path.join(pageDir, file)));
+      for (const match of source.matchAll(/\bBILI_[A-Z][A-Z_]*\b/g)) {
+        referencedGlobals.add(match[0]);
+      }
+    }
+
+    for (const name of referencedGlobals) {
+      const file = globalToFile(name);
+      assert.ok(
+        loadedFiles.has(file),
+        `${page} 的脚本用到 ${name}，但没有加载 ${file}`,
+      );
+    }
+  }
+});
+
 test("HTML 引用的脚本与样式都存在", () => {
   for (const page of ["sidepanel.html", "options.html"]) {
     const html = readText(page);

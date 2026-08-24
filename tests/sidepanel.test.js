@@ -178,6 +178,7 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
     BILI_CONCURRENCY: require("../lib/concurrency.js"),
     BILI_LEARNING_STORE: require("../lib/learning-store.js"),
     BILI_HIGHLIGHT: require("../lib/highlight.js"),
+    BILI_QA_CITATIONS: require("../lib/qa-citations.js"),
     BILI_SETTINGS: require("../settings.js"),
     Blob,
     URL,
