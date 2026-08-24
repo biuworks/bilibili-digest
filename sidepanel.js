@@ -1411,6 +1411,8 @@ const QA_FALLBACK_HINT = "未能从字幕中找到足够的依据";
 let qaAsking = false;
 
 async function loadQaHistory() {
+  // 进行中的占位卡不能被迟到的历史加载冲掉。
+  if (qaAsking) return;
   if (!state.bvid) {
     renderQaList([]);
     return;
@@ -1435,19 +1437,32 @@ function setQaAsking(asking) {
 }
 
 async function submitQuestion() {
-  if (qaAsking) {
-    // 进行中按钮变「停止」：只取消在途任务，不清输入。
-    const running = el("qaAskBtn").dataset.taskId;
-    if (running) await sendToBackground({ action: "cancelAiTask", taskId: running });
-    return;
-  }
+  // 进行中按钮变「停止」；Enter 不再承担取消职责，避免误触。
+  if (qaAsking) return;
+
   const question = el("qaInput").value.trim();
   if (!question) return;
 
   const taskId = `qa_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  el("qaAskBtn").dataset.taskId = taskId;
+  // 占位卡先上屏：清输入、立刻看到「正在检索…」，界面不再像卡死。
+  const pendingId = `${taskId}_pending`;
+  el("qaInput").value = "";
   setQaAsking(true);
   hideQaHint();
+  renderQaListPrepend({
+    id: pendingId,
+    bvid: state.bvid,
+    page: state.page,
+    question,
+    answer: null,
+    citations: [],
+    pending: true,
+    createdAt: Date.now(),
+  });
+
+  const dropPending = () => {
+    renderQaList(currentQaEntries().filter((item) => item.id !== pendingId));
+  };
 
   try {
     await sendToBackground({ action: "startAiTask", taskId, kind: "qa" });
@@ -1460,13 +1475,24 @@ async function submitQuestion() {
     });
 
     if (!result?.success) {
-      showQaHint(result?.message || "问答失败，请重试。");
+      dropPending();
+      el("qaInput").value = question;
+      showQaHint(
+        result?.error === "TASK_CANCELED"
+          ? "已取消本次问答。"
+          : result?.message || "问答失败，请重试。",
+      );
       return;
     }
 
-    el("qaInput").value = "";
-    renderQaListPrepend(result.entry);
+    // 真卡换占位卡。
+    renderQaList([
+      result.entry,
+      ...currentQaEntries().filter((item) => item.id !== pendingId),
+    ]);
   } catch (error) {
+    dropPending();
+    el("qaInput").value = question;
     showQaHint(error?.message || "问答失败，请重试。");
   } finally {
     setQaAsking(false);
@@ -1543,7 +1569,7 @@ function qaCitationText(entry) {
 
 function renderQaCard(entry) {
   const card = document.createElement("div");
-  card.className = "note qa-card";
+  card.className = entry.pending ? "note qa-card qa-pending" : "note qa-card";
 
   const head = document.createElement("div");
   head.className = "entry-head";
@@ -1570,6 +1596,17 @@ function renderQaCard(entry) {
 
   const answer = document.createElement("div");
   answer.className = "entry-text";
+  if (entry.pending) {
+    // 进行态：转圈 + 说明文字，让「在等 AI」看得见。
+    const status = document.createElement("span");
+    status.className = "qa-pending-answer";
+    const spinner = document.createElement("span");
+    spinner.className = "spinner spinner-inline";
+    status.append(spinner, "正在检索字幕并组织回答…");
+    answer.append(status);
+    card.append(head, question, answer);
+    return card;
+  }
   appendAnswerText(answer, entry.answer, entry.clickable);
 
   const citations = document.createElement("div");
@@ -2349,7 +2386,7 @@ function setupEventListeners() {
 
   el("qaAskBtn").addEventListener("click", submitQuestion);
   el("qaInput").addEventListener("keydown", (event) => {
-    if (event.key === "Enter") submitQuestion();
+    if (event.key === "Enter" && !qaAsking) submitQuestion();
   });
 
   document.addEventListener("selectionchange", onSelectionChange);

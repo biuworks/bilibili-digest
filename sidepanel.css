@@ -1046,6 +1046,25 @@ button {
   padding: 0 12px 6px;
 }
 
+.qa-pending-answer {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.spinner-inline {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.qa-card.qa-pending {
+  opacity: 0.75;
+}
+
 .qa-question {
   margin: 0 0 6px;
   font-size: 13px;

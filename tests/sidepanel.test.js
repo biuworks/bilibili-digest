@@ -54,6 +54,9 @@ function createElement(tag = "div") {
     append(...nodes) {
       this.children.push(...nodes);
     },
+    prepend(...nodes) {
+      this.children.unshift(...nodes);
+    },
     insertBefore(node) {
       this.children.push(node);
       return node;
@@ -92,7 +95,13 @@ function createElement(tag = "div") {
   };
 }
 
-function createContext({ transcript, analysis, videoAvailable = { available: true }, notes = [] }) {
+function createContext({
+  transcript,
+  analysis,
+  videoAvailable = { available: true },
+  notes = [],
+  replies = {},
+}) {
   const elements = new Map();
   const byId = (id) => {
     if (!elements.has(id)) elements.set(id, createElement("div"));
@@ -133,6 +142,10 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
       runtime: {
         async sendMessage(message) {
           sent.push(message);
+          if (replies[message.action]) {
+            const reply = replies[message.action];
+            return typeof reply === "function" ? await reply(message) : reply;
+          }
           if (message.action === "fetchTranscript") return transcript;
           if (message.action === "analyzeTranscript") return analysis;
           if (message.action === "retryFailedAnalysis") {
@@ -190,7 +203,7 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground };`,
+    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground, submitQuestion, switchTab };`,
     context,
   );
 
@@ -1573,4 +1586,85 @@ test("生成失败只影响概览这一块，字幕仍然可读", async () => {
     "ready",
     "概览失败不该把整个面板打回错误态，字幕还在",
   );
+});
+
+test("提问后立即进入进行态：清输入、上占位卡，完成后替换为真卡", async () => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const realEntry = {
+    id: "qa_real",
+    bvid: "BV1xx411c7mD",
+    page: 1,
+    question: "这个视频的结论是什么？",
+    answer: "结论在 [0:05]。",
+    citations: [{ startSeconds: 5, quote: "字幕原句" }],
+    clickable: [5],
+    createdAt: Date.now(),
+  };
+  const ctx = createContext({
+    transcript: transcriptResult(),
+    replies: {
+      getQaHistory: async () => ({ success: true, entries: [] }),
+      startAiTask: async () => ({ success: true }),
+      askQuestion: async () => {
+        await gate;
+        return { success: true, entry: realEntry };
+      },
+    },
+  });
+  ctx.state.bvid = "BV1xx411c7mD";
+  ctx.state.page = 1;
+  ctx.switchTab("qa");
+  // 等历史加载落地，避免它和提交竞态。
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  ctx.el("qaInput").value = "  这个视频的结论是什么？  ";
+  const pending = ctx.submitQuestion();
+
+  // 同步阶段就能观察到：输入已清空，占位卡带 pending 样式。
+  assert.equal(ctx.el("qaInput").value, "");
+  const pendingCards = ctx.el("qaList").children.filter((card) =>
+    card.className.includes("qa-pending"),
+  );
+  assert.equal(pendingCards.length, 1, "应有进行态占位卡");
+
+  release();
+  await pending;
+
+  const cards = ctx.el("qaList").children;
+  assert.equal(cards.length, 1, "占位卡应被真卡替换");
+  assert.equal(cards[0].className.includes("qa-pending"), false);
+  const questionNode = cards[0].children.find(
+    (child) => child.className === "qa-question",
+  );
+  assert.match(questionNode.textContent, /结论是什么/);
+});
+
+test("问答失败时恢复输入并移除占位卡", async () => {
+  const ctx = createContext({
+    transcript: transcriptResult(),
+    replies: {
+      getQaHistory: async () => ({ success: true, entries: [] }),
+      startAiTask: async () => ({ success: true }),
+      askQuestion: async () => ({
+        success: false,
+        error: "NO_AI_CONFIG",
+        message: "AI 还没配置好。",
+      }),
+    },
+  });
+  ctx.state.bvid = "BV1xx411c7mD";
+  ctx.state.page = 1;
+  ctx.switchTab("qa");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  ctx.el("qaInput").value = "会失败的问题";
+  await ctx.submitQuestion();
+
+  assert.equal(ctx.el("qaList").children.length, 0, "占位卡已移除");
+  assert.equal(ctx.el("qaInput").value, "会失败的问题", "输入内容还给用户");
+  assert.equal(ctx.el("qaHint").hidden, false);
+  assert.match(ctx.el("qaHint").textContent, /还没配置好/);
 });
