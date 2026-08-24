@@ -37,6 +37,16 @@ test("是一份 MV3 清单", () => {
   // 侧边栏 API 需要 Chrome 116+。Edge 的版本号跟 Chromium 对齐，同一个门槛
   // 对它一样成立（Edge 自 114 起支持侧边栏）。
   assert.ok(Number(manifest.minimum_chrome_version) >= 116);
+
+  // 版本号要手动同步的地方不止一处，漂移了不会报错、只会让商店包和仓库对不上。
+  const pkg = readJson("package.json");
+  assert.equal(pkg.version, manifest.version, "package.json 版本与清单不一致");
+
+  const listing = readText("STORE-LISTING.md");
+  assert.ok(
+    listing.includes(`digest-for-bilibili-${manifest.version}.zip`),
+    "STORE-LISTING.md 的安装包文件名还是旧版本号",
+  );
 });
 
 /**
@@ -120,6 +130,38 @@ test("service worker importScripts 的依赖都存在", () => {
   assert.ok(files.includes("settings.js"));
   for (const file of files) {
     assert.ok(exists(file), `importScripts 引用了不存在的文件：${file}`);
+  }
+});
+
+/**
+ * lib 模块是 IIFE 挂全局 + require 双导出，浏览器里靠 importScripts 的顺序
+ * 保证「被依赖者先加载」——模块顶层的 typeof 守卫在求值时立即走完，
+ * 排在后面就会在 service worker 里抛 `require is not defined`，
+ * 表现是整个扩展注册失败。各文件的依赖以其 require("./x.js") 声明为准。
+ */
+test("importScripts 的加载顺序满足模块间依赖", () => {
+  const source = readText(manifest.background.service_worker);
+  const block = source.match(/importScripts\(([\s\S]*?)\);/);
+  const files = [...block[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const position = new Map(files.map((file, index) => [file, index]));
+
+  for (const file of files) {
+    if (!file.startsWith("lib/")) continue;
+    const body = readText(file);
+    // lib 内部的 require 是同目录相对引用，统一解析回仓库根路径再比对。
+    for (const [, dep] of body.matchAll(/require\("\.\/([^"]+)"\)/g)) {
+      const depPath = file.includes("/")
+        ? `${file.slice(0, file.lastIndexOf("/"))}/${dep}`
+        : dep;
+      assert.ok(
+        position.has(depPath),
+        `${file} 依赖 ${depPath}，但它不在 importScripts 列表里`,
+      );
+      assert.ok(
+        position.get(depPath) < position.get(file),
+        `${file} 在 ${depPath} 之前加载，service worker 里会直接抛 require is not defined`,
+      );
+    }
   }
 });
 
