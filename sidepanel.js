@@ -1635,36 +1635,6 @@ function renderQaCard(entry) {
 
   const actions = document.createElement("div");
   actions.className = "entry-actions";
-  // 存为笔记：图标容易让人以为是「编辑」，title 与保存后的 toast
-  // 把去向说清楚——笔记在「笔记」页里还能继续编辑。
-  const saveNoteBtn = actionButton({
-    iconName: "note",
-    title: "存为笔记（可在笔记页编辑）",
-    onClick: async (button) => {
-      button.disabled = true;
-      try {
-        const result = await sendToBackground(
-          {
-            action: "saveNote",
-            bvid: entry.bvid,
-            page: entry.page,
-            timestamp: (entry.citations || [])[0]?.startSeconds ?? 0,
-            text: qaCitationText(entry),
-          },
-          { idempotent: true },
-        );
-        if (result?.success) {
-          showToast(result.duplicate ? "这条已经在笔记里了" : "已存为笔记，去「笔记」页可查看和编辑");
-        } else {
-          showToast(result?.message || "存为笔记失败");
-        }
-      } catch (error) {
-        showToast(error?.message || "存为笔记失败");
-      } finally {
-        button.disabled = false;
-      }
-    },
-  });
   const copyBtn = actionButton({
     iconName: "copy",
     title: "复制回答",
@@ -1677,7 +1647,7 @@ function renderQaCard(entry) {
       }
     },
   });
-  actions.append(saveNoteBtn, copyBtn);
+  actions.append(copyBtn);
 
   card.append(head, question, answer);
   if ((entry.citations || []).length) card.append(citations);

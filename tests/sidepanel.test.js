@@ -1677,7 +1677,7 @@ test("问答失败时恢复输入并移除占位卡", async () => {
   assert.match(ctx.el("qaHint").textContent, /还没配置好/);
 });
 
-test("问答卡片的存笔记与复制都有去向反馈", async () => {
+test("问答卡片只有复制操作，且有成功反馈", async () => {
   const entry = {
     id: "qa_1",
     bvid: "BV1xx411c7mD",
@@ -1688,15 +1688,10 @@ test("问答卡片的存笔记与复制都有去向反馈", async () => {
     clickable: [30],
     createdAt: Date.now(),
   };
-  let savedPayload = null;
   const ctx = createContext({
     transcript: transcriptResult(),
     replies: {
       getQaHistory: async () => ({ success: true, entries: [entry] }),
-      saveNote: async (message) => {
-        savedPayload = message;
-        return { success: true };
-      },
     },
   });
   ctx.state.bvid = "BV1xx411c7mD";
@@ -1706,20 +1701,14 @@ test("问答卡片的存笔记与复制都有去向反馈", async () => {
 
   const card = ctx.el("qaList").children[0];
   const actions = card.children.find((child) => child.className === "entry-actions");
-  assert.ok(actions, "应有操作区");
+  assert.equal(actions.children.length, 1, "只保留复制按钮");
 
-  // 存为笔记：发出 saveNote，正文含回答与引用，toast 确认去向。
   await actions.children[0].dispatch("click");
   await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.equal(savedPayload.action, "saveNote");
-  assert.match(savedPayload.text, /回答正文/);
-  assert.match(savedPayload.text, /\[0:30\] 引用原句/);
+  assert.deepEqual(ctx.navigator.clipboard.writes, [
+    "回答正文\n[0:30] 引用原句",
+  ]);
   assert.equal(ctx.el("toast").hidden, false);
-  assert.match(ctx.el("toast").textContent, /已存为笔记/);
-
-  // 复制：剪贴板收到同样内容，toast 提示成功。
-  await actions.children[1].dispatch("click");
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  assert.deepEqual(ctx.navigator.clipboard.writes, [savedPayload.text]);
   assert.match(ctx.el("toast").textContent, /已复制/);
 });
+
