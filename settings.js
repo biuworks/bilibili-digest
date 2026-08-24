@@ -110,6 +110,7 @@ var BILI_SETTINGS = (() => {
     concurrency: Object.freeze({ min: 1, max: 8, default: 3 }),
     timeoutSeconds: Object.freeze({ min: 30, max: 600, default: 120 }),
     analysisOverlapChars: Object.freeze({ min: 0, max: 2000, default: 400 }),
+    uiFontScale: Object.freeze({ min: 80, max: 160, default: 100 }),
   });
 
   const ANALYSIS_CHUNK_MODES = Object.freeze({
@@ -128,6 +129,7 @@ var BILI_SETTINGS = (() => {
     aiTimeoutSeconds: LIMITS.timeoutSeconds.default,
     analysisChunkMode: "auto",
     analysisOverlapChars: LIMITS.analysisOverlapChars.default,
+    uiFontScale: LIMITS.uiFontScale.default,
     // 字幕轨优先级：UP 主中文 > AI 中文 > 英文（见 lib/bili-api.js）。
     subtitleLangPreference: Object.freeze([
       "zh-CN",
@@ -142,6 +144,36 @@ var BILI_SETTINGS = (() => {
   });
 
   const LANG_CODE_PATTERN = /^[A-Za-z]{2,8}(-[A-Za-z0-9]{2,8})*$/;
+
+  const LEGACY_UI_FONT_SCALES = Object.freeze({
+    default: 100,
+    large: 115,
+    xlarge: 125,
+  });
+
+  function normalizeUiFontScale(source) {
+    if (source && typeof source === "object") {
+      if (source.uiFontScale != null && source.uiFontScale !== "") {
+        return clampNumber(source.uiFontScale, LIMITS.uiFontScale);
+      }
+      if (Object.hasOwn(LEGACY_UI_FONT_SCALES, source.uiFontSize)) {
+        return LEGACY_UI_FONT_SCALES[source.uiFontSize];
+      }
+      return LIMITS.uiFontScale.default;
+    }
+    return clampNumber(source, LIMITS.uiFontScale);
+  }
+
+  function applyUiFontScale(
+    scale,
+    root = typeof document !== "undefined" ? document.documentElement : null,
+  ) {
+    const value = normalizeUiFontScale(scale);
+    if (root?.style?.setProperty) {
+      root.style.setProperty("--ui-font-zoom", String(value / 100));
+    }
+    return value;
+  }
 
   function clampNumber(value, { min, max, default: fallback }) {
     // 空值不能交给 Number()——它把 null 和 "" 都算作 0，「没配过」会被夹成下界。
@@ -184,7 +216,7 @@ var BILI_SETTINGS = (() => {
     if (parsed.protocol === "http:" && !LOCAL_HOSTS.has(parsed.hostname)) {
       return {
         ok: false,
-        error: "只有本机地址允许用 http，其余请用 https，否则密钥会明文传输。",
+        error: "仅本机地址允许使用 http，其余地址须使用 https，否则密钥将以明文传输。",
       };
     }
 
@@ -270,6 +302,7 @@ var BILI_SETTINGS = (() => {
         source.analysisOverlapChars,
         LIMITS.analysisOverlapChars,
       ),
+      uiFontScale: normalizeUiFontScale(source),
       subtitleLangPreference: normalizeLangPreference(source.subtitleLangPreference),
     };
   }
@@ -291,7 +324,7 @@ var BILI_SETTINGS = (() => {
     }
     const base = validateBaseUrl(normalized.aiBaseUrl, normalized.protocol);
     if (!base.ok) errors.push(base.error);
-    if (!normalized.aiModel) errors.push("请填写模型名，或点「拉取模型列表」选一个。");
+    if (!normalized.aiModel) errors.push("请填写模型名称，或点击「拉取模型列表」进行选择。");
     return { ok: errors.length === 0, errors, settings: normalized };
   }
 
@@ -314,6 +347,8 @@ var BILI_SETTINGS = (() => {
     ANALYSIS_CHUNK_MODES,
     analysisChunkOptions,
     normalize,
+    normalizeUiFontScale,
+    applyUiFontScale,
     normalizeLangPreference,
     validate,
     validateBaseUrl,

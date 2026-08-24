@@ -90,24 +90,43 @@ async function runManagedAiOperation(taskId, operation, { autoFinish = false } =
   return result;
 }
 
+/**
+ * MV3 只为「正在处理的事件」保活 service worker，顶层发起的异步调用不算数：
+ * 求值一结束浏览器就有权回收 worker，在途的扩展 API 调用会被判死刑，
+ * Chromium 回一句 `No SW`。所以这个文件的顶层不做任何异步工作，
+ * 需要落地的初始化挂到真实事件上，需要数据的地方惰性触发。
+ */
+
 // 内容脚本运行在 B 站页面上下文，不应读到密钥或缓存。
-chrome.storage.local
-  .setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" })
-  .catch((error) =>
-    console.warn("[Bilibili Digest] 无法限制存储访问级别：", error),
-  );
+function restrictStorageAccess() {
+  chrome.storage.local
+    .setAccessLevel({ accessLevel: "TRUSTED_CONTEXTS" })
+    .catch((error) =>
+      console.warn("[Bilibili Digest] 无法限制存储访问级别：", error),
+    );
+}
+
+const learningStorage = chrome.storage.local;
 
 // 旧版本直接把笔记数组写在 storage.local。所有读写都等这次轻量迁移完成，
-// 避免升级后的第一个操作和迁移同时改写数据。
-const learningStorage = chrome.storage.local;
-const learningDataReady = BILI_LEARNING_STORE.ensureMigrated({
-  storage: learningStorage,
-}).catch((error) => {
-  console.error("[Bilibili Digest] 学习资料迁移失败：", error);
-  // 迁移失败也先让旧笔记可读；后续写入会给出明确错误，不能因为升级元数据
-  // 没写进去就把用户原有内容整个挡住。
-  return { migrated: false, error };
-});
+// 避免升级后的第一个操作和迁移同时改写数据。整个 worker 生命周期只跑一次，
+// 但失败时要把记忆清掉：否则一次偶发失败会让这条 worker 上的后续操作
+// 全部停在降级状态，直到浏览器下次回收它为止。
+let learningMigration = null;
+function learningDataReady() {
+  if (!learningMigration) {
+    learningMigration = BILI_LEARNING_STORE.ensureMigrated({
+      storage: learningStorage,
+    }).catch((error) => {
+      console.error("[Bilibili Digest] 学习资料迁移失败：", error);
+      learningMigration = null;
+      // 迁移失败也先让旧笔记可读；后续写入会给出明确错误，不能因为升级元数据
+      // 没写进去就把用户原有内容整个挡住。
+      return { migrated: false, error };
+    });
+  }
+  return learningMigration;
+}
 
 async function getSettings() {
   const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
@@ -129,14 +148,29 @@ async function getSettings() {
 
 // 让浏览器自己响应工具栏图标的点击。自己调 open() 要求调用发生在用户手势里，
 // 而手势的判定 Edge 比 Chrome 严，交给浏览器是两边都稳的唯一做法。
-chrome.sidePanel
-  .setPanelBehavior({ openPanelOnActionClick: true })
-  .catch((error) =>
-    console.warn("[Bilibili Digest] 无法设置侧边栏点击行为：", error),
-  );
+function enableActionClickToOpen() {
+  chrome.sidePanel
+    .setPanelBehavior({ openPanelOnActionClick: true })
+    .catch((error) =>
+      console.warn("[Bilibili Digest] 无法设置侧边栏点击行为：", error),
+    );
+}
 
-chrome.runtime.onInstalled.addListener(({ reason }) => {
+// 这两项都是持久化设置，装好/升级/浏览器启动时各设一次即可，不必每次
+// worker 醒来都重设——那正是会撞上 `No SW` 的顶层异步。
+function initializeOnce() {
+  restrictStorageAccess();
+  enableActionClickToOpen();
+}
+
+chrome.runtime.onStartup.addListener(initializeOnce);
+
+chrome.runtime.onInstalled.addListener(async ({ reason }) => {
+  initializeOnce();
   if (reason === "install") chrome.runtime.openOptionsPage();
+  // 升级正是数据迁移该发生的时刻，而且这里是真事件，有 keepalive 兜着。
+  // 万一仍被打断，各读写路径上的 learningDataReady() 会再补一次。
+  await learningDataReady();
 });
 
 /**
@@ -252,6 +286,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.action === "retryFailedAnalysis") {
+    runManagedAiOperation(
+      message.taskId,
+      (signal) => handleRetryFailedAnalysis(message.bvid, {
+        page: message.page,
+        signal,
+        taskId: message.taskId,
+      }),
+      { autoFinish: true },
+    )
+      .then(sendResponse)
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
   if (message?.action === "polishSegments") {
     runManagedAiOperation(message.taskId, (signal) =>
       handlePolishSegments(message.bvid, {
@@ -350,6 +399,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.action === "exportLearningBackup") {
+    handleExportLearningBackup()
+      .then(sendResponse)
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.action === "importLearningBackup") {
+    handleImportLearningBackup(message.backup)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
   return false;
 });
 
@@ -444,13 +507,28 @@ async function handleFetchTranscript(bvidInput, { page = 1, forceRefresh = false
 
 // 字幕缓存只有 30 天；用户生成过的概览属于学习资料，过期后仍应能与笔记重聚。
 async function restoreLearningAnalysis(payload, bvid, page) {
-  if (payload?.analysis) return payload;
-  await learningDataReady;
+  const failuresOf = (record) =>
+    Array.isArray(record?.analysisFailures) ? record.analysisFailures : [];
+
+  if (payload?.analysis) {
+    if (Array.isArray(payload.analysisFailures)) return payload;
+    await learningDataReady();
+    const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, page, {
+      storage: learningStorage,
+    });
+    return { ...payload, analysisFailures: failuresOf(record) };
+  }
+  await learningDataReady();
   const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, page, {
     storage: learningStorage,
   });
   if (!record?.analysis) return payload;
-  return { ...payload, analysis: record.analysis, analysisSource: "learning" };
+  return {
+    ...payload,
+    analysis: record.analysis,
+    analysisFailures: failuresOf(record),
+    analysisSource: "learning",
+  };
 }
 
 // ============================================================
@@ -756,19 +834,29 @@ async function handleAnalyzeTranscript(
 
   const cached = await BILI_CACHE.load(bvid, { page: pageNumber });
   if (!forceRefresh && cached?.analysis) {
-    return { success: true, fromCache: true, analysis: cached.analysis };
+    const failures = Array.isArray(cached.analysisFailures) ? cached.analysisFailures : [];
+    return {
+      success: true,
+      fromCache: true,
+      analysis: cached.analysis,
+      analysisFailures: failures,
+      failedChunks: failures.length,
+    };
   }
   if (!forceRefresh) {
-    await learningDataReady;
+    await learningDataReady();
     const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, pageNumber, {
       storage: learningStorage,
     });
     if (record?.analysis) {
+      const failures = Array.isArray(record.analysisFailures) ? record.analysisFailures : [];
       return {
         success: true,
         fromCache: true,
         analysisSource: "learning",
         analysis: record.analysis,
+        analysisFailures: failures,
+        failedChunks: failures.length,
       };
     }
   }
@@ -804,51 +892,20 @@ async function handleAnalyzeTranscript(
       message: `正在生成第 0/${chunks.length} 块`,
     });
 
-    const analyzeOne = (chunk) => {
-      throwIfTaskCanceled(signal);
-      return analyzeChunk(chunk, chunks.length, common, { signal });
-    };
-    const results = await BILI_CONCURRENCY.mapWithConcurrency(
-      chunks,
-      settings.aiConcurrency,
-      analyzeOne,
-      (done, total) => reportProgress("analysis", done, total, {
-        taskId,
-        phase: "generating",
-        message: `正在生成第 ${done}/${total} 块`,
-      }),
-    );
-    throwIfTaskCanceled(signal);
-
-    // 部分块失败多半是偶发超时或限流，静默补一轮；全军覆没通常是配置错误，不补。
-    const failedIndexes = results
-      .map((result, index) => (result.status === "rejected" ? index : -1))
-      .filter((index) => index >= 0);
-    if (failedIndexes.length && failedIndexes.length < chunks.length) {
-      reportProgress("analysis", chunks.length - failedIndexes.length, chunks.length, {
-        taskId,
-        phase: "retrying",
-        message: `正在重试 ${failedIndexes.length} 个失败分块`,
-      });
-      debugLog(`[Bilibili Digest] ${failedIndexes.length} 块失败，自动补一轮`);
-      const retried = await BILI_CONCURRENCY.mapWithConcurrency(
-        failedIndexes.map((index) => chunks[index]),
-        settings.aiConcurrency,
-        analyzeOne,
-      );
-      failedIndexes.forEach((chunkIndex, i) => {
-        if (retried[i].status === "fulfilled") results[chunkIndex] = retried[i];
-      });
-    }
+    const results = await analyzePlannedChunks(chunks, chunks.length, common, settings, {
+      signal,
+      taskId,
+    });
     throwIfTaskCanceled(signal);
 
     const parts = results
       .filter((result) => result.status === "fulfilled" && result.value)
       .map((result) => result.value);
-    const failures = results.filter((result) => result.status === "rejected");
+    const remaining = BILI_AI.chunkFailureRanges(chunks, results);
 
     if (!parts.length) {
       // 全军覆没时把第一个真实错误透出去，它比「生成失败」有用得多。
+      const failures = results.filter((result) => result.status === "rejected");
       throw failures[0]?.reason || new Error("概览生成失败。");
     }
 
@@ -866,38 +923,195 @@ async function handleAnalyzeTranscript(
       };
     }
 
-    // 概览与字幕存在同一条缓存里，下次打开直接命中。
-    await updateCache(bvid, pageNumber, (current) => ({
-      ...current,
-      ...persistable(transcript),
-      analysis,
-    }));
-
-    // 与 30 天字幕缓存分开保存，之后导出时概览不会先于笔记消失。
-    await learningDataReady;
-    await BILI_LEARNING_STORE.saveLearningRecord(
-      {
-        bvid,
-        page: pageNumber,
-        videoTitle: transcript.videoInfo?.title || "",
-        ownerName: transcript.videoInfo?.owner || "",
-        analysis,
-      },
-      { storage: learningStorage },
-    );
+    await persistAnalysisSnapshot(bvid, pageNumber, transcript, analysis, remaining);
 
     return {
       success: true,
       fromCache: false,
       analysis,
       chunkCount: chunks.length,
+      analysisFailures: remaining,
       // 部分块失败仍然出结果，但要如实告诉用户这份概览是不完整的。
-      failedChunks: failures.length,
+      failedChunks: remaining.length,
     };
   } catch (error) {
     console.error("[Bilibili Digest] 概览生成失败：", error);
     return aiErrorResponse(error);
   }
+}
+
+async function handleRetryFailedAnalysis(bvidInput, { page = 1, signal, taskId } = {}) {
+  const bvid = BILI_API.parseBvid(bvidInput);
+  if (!bvid) {
+    return { success: false, error: "INVALID_BVID", message: "没有识别到 BV 号。" };
+  }
+  const pageNumber = Number(page) > 0 ? Math.floor(Number(page)) : 1;
+  const cached = await BILI_CACHE.load(bvid, { page: pageNumber });
+  const transcript = cached?.transcript?.length
+    ? { ...cached, success: true }
+    : await ensureTranscript(bvid, pageNumber);
+  if (!transcript.success) return transcript;
+
+  await learningDataReady();
+  const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, pageNumber, {
+    storage: learningStorage,
+  });
+  const existing = transcript.analysis || record?.analysis;
+  const storedFailures = Array.isArray(transcript.analysisFailures) && transcript.analysisFailures.length
+    ? transcript.analysisFailures
+    : record?.analysisFailures;
+  if (!existing) {
+    return { success: false, error: "NO_ANALYSIS", message: "还没有可补的概览，请先生成。" };
+  }
+  if (!Array.isArray(storedFailures) || !storedFailures.length) {
+    return {
+      success: true,
+      fromCache: true,
+      analysis: existing,
+      analysisFailures: [],
+      failedChunks: 0,
+    };
+  }
+
+  try {
+    throwIfTaskCanceled(signal);
+    const settings = await getSettings();
+    const chunkOptions = BILI_SETTINGS.analysisChunkOptions(settings);
+    const chunks = BILI_AI.planAnalysisChunks(transcript.segments, chunkOptions);
+    const selected = BILI_AI.chunksForFailureRanges(chunks, storedFailures);
+    if (!selected.length) {
+      return {
+        success: false,
+        error: "FAILED_CHUNKS_MISMATCH",
+        message: "当前分块对不上失败区间，请重新生成整份概览。",
+      };
+    }
+
+    const common = {
+      videoTitle: transcript.videoInfo?.title || "未知",
+      ownerName: transcript.videoInfo?.owner || "未知",
+      videoDescription: transcript.videoInfo?.description || "（无简介）",
+    };
+    const totalDuration = Math.max(
+      Math.floor(Number(transcript.videoInfo?.duration) || 0),
+      chunks[chunks.length - 1].endSeconds,
+    );
+
+    debugLog(`[Bilibili Digest] 补 ${selected.length} 个失败分块`);
+    reportProgress("analysis", 0, selected.length, {
+      taskId,
+      phase: "retrying",
+      message: `正在补第 0/${selected.length} 个失败块`,
+    });
+
+    const results = await analyzePlannedChunks(selected, chunks.length, common, settings, {
+      signal,
+      taskId,
+      progressMessage: (done, total) => `正在补第 ${done}/${total} 个失败块`,
+      retryPartialOnly: false,
+    });
+    throwIfTaskCanceled(signal);
+
+    const parts = results
+      .filter((result) => result.status === "fulfilled" && result.value)
+      .map((result) => result.value);
+    const remaining = BILI_AI.chunkFailureRanges(selected, results);
+    const analysis = parts.length
+      ? BILI_AI.mergeRetryIntoAnalysis(existing, parts, selected, totalDuration)
+      : existing;
+
+    reportProgress("analysis", selected.length, selected.length, {
+      taskId,
+      phase: "merging",
+      message: remaining.length ? "失败块仍未全部补上" : "正在合并概览…",
+    });
+
+    await persistAnalysisSnapshot(bvid, pageNumber, transcript, analysis, remaining);
+
+    return {
+      success: true,
+      fromCache: false,
+      analysis,
+      chunkCount: selected.length,
+      analysisFailures: remaining,
+      failedChunks: remaining.length,
+    };
+  } catch (error) {
+    console.error("[Bilibili Digest] 补失败块失败：", error);
+    return aiErrorResponse(error);
+  }
+}
+
+async function persistAnalysisSnapshot(bvid, pageNumber, transcript, analysis, analysisFailures) {
+  await updateCache(bvid, pageNumber, (current) => ({
+    ...current,
+    ...persistable(transcript),
+    analysis,
+    analysisFailures,
+  }));
+  await learningDataReady();
+  await BILI_LEARNING_STORE.saveLearningRecord(
+    {
+      bvid,
+      page: pageNumber,
+      videoTitle: transcript.videoInfo?.title || "",
+      ownerName: transcript.videoInfo?.owner || "",
+      analysis,
+      analysisFailures,
+    },
+    { storage: learningStorage },
+  );
+}
+
+async function analyzePlannedChunks(
+  chunks,
+  chunkCount,
+  common,
+  settings,
+  { signal, taskId, progressMessage, retryPartialOnly = true } = {},
+) {
+  const analyzeOne = (chunk) => {
+    throwIfTaskCanceled(signal);
+    return analyzeChunk(chunk, chunkCount, common, { signal });
+  };
+  const label = progressMessage || ((done, total) => `正在生成第 ${done}/${total} 块`);
+  const results = await BILI_CONCURRENCY.mapWithConcurrency(
+    chunks,
+    settings.aiConcurrency,
+    analyzeOne,
+    (done, total) => reportProgress("analysis", done, total, {
+      taskId,
+      phase: "generating",
+      message: label(done, total),
+    }),
+  );
+  throwIfTaskCanceled(signal);
+
+  // 部分块失败多半是偶发超时或限流，静默补一轮；整份全军覆没通常是配置错误，不补。
+  // 用户点「补失败块」时，即使这一轮全失败也再给一次机会。
+  const failedIndexes = results
+    .map((result, index) => (result.status === "rejected" ? index : -1))
+    .filter((index) => index >= 0);
+  if (
+    failedIndexes.length &&
+    (!retryPartialOnly || failedIndexes.length < chunks.length)
+  ) {
+    reportProgress("analysis", chunks.length - failedIndexes.length, chunks.length, {
+      taskId,
+      phase: "retrying",
+      message: `正在重试 ${failedIndexes.length} 个失败分块`,
+    });
+    debugLog(`[Bilibili Digest] ${failedIndexes.length} 块失败，自动补一轮`);
+    const retried = await BILI_CONCURRENCY.mapWithConcurrency(
+      failedIndexes.map((index) => chunks[index]),
+      settings.aiConcurrency,
+      analyzeOne,
+    );
+    failedIndexes.forEach((chunkIndex, i) => {
+      if (retried[i].status === "fulfilled") results[chunkIndex] = retried[i];
+    });
+  }
+  return results;
 }
 
 // 时长相关变量按本块区间算，好让模型只覆盖这一段。
@@ -1168,7 +1382,7 @@ function noteWriteErrorResponse(error) {
 
 function mutateNotes(mutate) {
   return notesWriteQueue(async () => {
-    await learningDataReady;
+    await learningDataReady();
     const stored = await chrome.storage.local.get(NOTES_STORAGE_KEY);
     const notes = Array.isArray(stored[NOTES_STORAGE_KEY]) ? stored[NOTES_STORAGE_KEY] : [];
     const next = mutate(notes);
@@ -1366,7 +1580,7 @@ async function handleSaveNote({ bvid: bvidInput, page = 1, timestamp, text: manu
 }
 
 async function handleGetNotes(bvidInput, page) {
-  await learningDataReady;
+  await learningDataReady();
   const stored = await chrome.storage.local.get(NOTES_STORAGE_KEY);
   const notes = Array.isArray(stored[NOTES_STORAGE_KEY]) ? stored[NOTES_STORAGE_KEY] : [];
   const bvid = bvidInput ? BILI_API.parseBvid(bvidInput) : null;
@@ -1381,6 +1595,43 @@ async function handleGetNotes(bvidInput, page) {
         )
       : notes,
     totalCount: notes.length,
+  };
+}
+
+async function handleExportLearningBackup() {
+  await learningDataReady();
+  const all = await chrome.storage.local.get(null);
+  return {
+    success: true,
+    backup: BILI_LEARNING_STORE.buildBackup({
+      notes: all[NOTES_STORAGE_KEY],
+      learning: BILI_LEARNING_STORE.collectLearningRecords(all),
+    }),
+  };
+}
+
+async function handleImportLearningBackup(payload) {
+  await learningDataReady();
+  const parsed = BILI_LEARNING_STORE.parseBackup(payload);
+  if (!parsed.ok) return { success: false, error: parsed.error, message: parsed.message };
+  const all = await chrome.storage.local.get(null);
+  const merged = BILI_LEARNING_STORE.mergeBackup(
+    all[NOTES_STORAGE_KEY],
+    BILI_LEARNING_STORE.collectLearningRecords(all),
+    parsed.backup,
+  );
+  const writes = { [NOTES_STORAGE_KEY]: merged.notes };
+  for (const record of merged.learning) {
+    writes[BILI_LEARNING_STORE.learningKey(record.bvid, record.page)] = record;
+  }
+  await chrome.storage.local.set(writes);
+  chrome.runtime.sendMessage({ action: "notesImported" }).catch(() => {});
+  return {
+    success: true,
+    notesAdded: merged.notesAdded,
+    notesUpdated: merged.notesUpdated,
+    learningAdded: merged.learningAdded,
+    learningUpdated: merged.learningUpdated,
   };
 }
 
@@ -1441,7 +1692,7 @@ async function handleGenerateNoteDraft(noteId, { signal, taskId } = {}) {
       message: "正在生成优化建议…",
     });
   }
-  await learningDataReady;
+  await learningDataReady();
   const stored = await chrome.storage.local.get(NOTES_STORAGE_KEY);
   const notes = Array.isArray(stored[NOTES_STORAGE_KEY]) ? stored[NOTES_STORAGE_KEY] : [];
   const snapshot = notes.find((note) => note.id === noteId);

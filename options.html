@@ -12,19 +12,33 @@
     <section class="card">
       <h2>字幕</h2>
       <p class="hint">
-        字幕直接取自 B 站官方接口，<strong>不需要任何密钥</strong>。
-        但 B 站的字幕（尤其是 AI 字幕）需要登录后才可见，
-        所以请先在浏览器里登录 B 站账号。
+        字幕由 B 站官方接口提供，<strong>无需配置密钥</strong>。
+        部分字幕（含 AI 生成字幕）仅在登录后可见，
+        请先在浏览器中登录 B 站账号。
       </p>
+    </section>
+
+    <section class="card">
+      <h2>显示</h2>
+      <p class="hint">
+        本节设置仅作用于当前设备的侧边栏与本页面，修改后立即生效，无需执行「保存并授权」。
+      </p>
+      <label class="field">
+        <span class="field-label">界面字号（%）</span>
+        <input id="uiFontScale" type="number" min="80" max="160" step="5">
+        <span class="field-hint">
+          默认值 100，可设置范围 80 至 160。字幕、概览与笔记同步缩放。
+        </span>
+      </label>
     </section>
 
     <section class="card">
       <h2>AI 服务</h2>
       <p class="hint">
-        字幕顺句、AI 概览、划词解释和笔记润色需要一个大模型服务。
-        选好服务商后填密钥和模型即可，地址已经内置；
-        列表里没有的服务选「自定义」，可以自己填地址和协议。
-        密钥只保存在本机的扩展存储里，只会发送给所选服务商的地址。
+        字幕顺句、AI 概览、划词解释与笔记润色需调用大模型服务。
+        选择服务商后填写 API 密钥与模型名称即可，接口地址已内置；
+        如需使用列表外的服务，请选择「自定义」并自行填写地址与协议。
+        密钥仅保存于本机扩展存储，且只发送至所选服务商的接口地址。
       </p>
 
       <label class="field">
@@ -37,11 +51,11 @@
         <label class="field">
           <span class="field-label">API 协议</span>
           <select id="protocol">
-            <option value="openai">OpenAI 兼容（绝大多数服务）</option>
+            <option value="openai">OpenAI 兼容（多数服务）</option>
             <option value="anthropic">Anthropic（Claude）</option>
           </select>
           <span class="field-hint">
-            不确定就选 OpenAI 兼容——除 Claude 外的主流服务几乎都是这个形状。
+            除 Anthropic（Claude）外，主流服务多采用 OpenAI 兼容协议；无法确定时请选择该项。
           </span>
         </label>
 
@@ -50,9 +64,9 @@
           <input id="aiBaseUrl" type="url" autocomplete="off" spellcheck="false"
                  placeholder="https://api.example.com/v1">
           <span class="field-hint">
-            填到版本号为止即可，扩展会自动接上
+            填写至版本号即可，扩展将自动补全
             <code id="endpointPreview">/chat/completions</code>。
-            明文 http 只允许本机地址（如 Ollama）。
+            明文 http 仅允许用于本机地址（如 Ollama）。
           </span>
         </label>
       </div>
@@ -61,7 +75,7 @@
         <span class="field-label">API Key</span>
         <input id="aiApiKey" type="password" autocomplete="off" spellcheck="false"
                placeholder="sk-...">
-        <span class="field-hint">连本地服务时可以留空。</span>
+        <span class="field-hint">调用本机服务时可留空。</span>
       </label>
 
       <label class="field">
@@ -69,14 +83,14 @@
         <span class="field-row">
           <span class="model-control">
             <input id="aiModel" type="text" autocomplete="off" spellcheck="false"
-                   placeholder="填模型名，或点右侧按钮拉取">
+                   placeholder="填写模型名称，或点击右侧按钮获取">
             <select id="modelOptions" hidden
                     aria-label="选择已获取的模型"></select>
           </span>
           <button id="fetchModelsBtn" class="ghost-btn" type="button">拉取模型列表</button>
         </span>
         <span class="field-hint" id="modelsHint">
-          模型名换代很快，扩展不预置——直接问服务端要当前可用的列表最靠谱。
+          模型名称更新频繁，扩展不内置默认值。建议从服务端获取当前可用的模型列表。
         </span>
       </label>
 
@@ -84,9 +98,8 @@
         <span class="field-label">并发数</span>
         <input id="aiConcurrency" type="number" min="1" max="8" step="1">
         <span class="field-hint">
-          顺句和长视频概览会拆成多个请求并行发出。调高能明显缩短等待，
-          但更容易撞上服务商限流；限流返回的错误会让那一批白跑。
-          不确定就保持 3。
+          字幕顺句与长视频概览会拆分为多个请求并行发送。提高并发数可缩短处理时间，
+          但更易触发服务商限流，被限流的请求将直接失败。推荐值为 3。
         </span>
       </label>
 
@@ -94,21 +107,21 @@
         <span class="field-label">概览分块</span>
         <select id="analysisChunkMode">
           <option value="auto">自动（推荐）</option>
-          <option value="short">较短——请求更多，更稳定</option>
-          <option value="long">较长——请求更少，速度更快</option>
+          <option value="short">较短：请求数更多，稳定性更高</option>
+          <option value="long">较长：请求数更少，处理更快</option>
         </select>
         <span class="field-hint">
-          自动模式适合大多数模型；上下文较小或容易漏内容时选较短，
-          上下文充足且希望减少请求时选较长。
+          自动模式适用于多数模型。上下文窗口较小或存在内容遗漏时选择「较短」；
+          上下文窗口充足且需减少请求数时选择「较长」。
         </span>
       </label>
 
       <label class="field">
-        <span class="field-label">重复上下文字符数</span>
+        <span class="field-label">分块重叠字符数</span>
         <input id="analysisOverlapChars" type="number" min="0" max="2000" step="50">
         <span class="field-hint">
-          每个分块会附带上一块结尾的这部分文字，减少边界处断句和语义丢失。
-          默认 400；设为 0 可关闭，通常无需超过 1000。
+          每个分块附带上一分块结尾的指定长度文本，用于降低分块边界处的断句与语义丢失。
+          默认值 400，设为 0 表示关闭，一般无需超过 1000。
         </span>
       </label>
 
@@ -116,7 +129,7 @@
         <span class="field-label">单次请求超时（秒）</span>
         <input id="aiTimeoutSeconds" type="number" min="30" max="600" step="10">
         <span class="field-hint">
-          超过这个时间就放弃并报错。本地模型或超长视频可以调大。
+          请求超过该时长将中止并返回错误。使用本机模型或处理超长视频时可适当提高。
         </span>
       </label>
 
@@ -127,10 +140,25 @@
       </div>
 
       <p class="hint note">
-        点「保存并授权」时，浏览器会弹窗询问是否允许本扩展访问所选服务商的域名。
-        这是浏览器的安全机制：扩展在安装时并不知道你会用哪家服务，
-        所以只能在你选好之后再申请，而且只申请这一个域名。
+        执行「保存并授权」时，浏览器将询问是否允许本扩展访问所选服务商的域名。
+        这是浏览器的权限机制：扩展在安装阶段无法预知所使用的服务，
+        因此需在选定服务商后单独申请，且仅申请该域名。
       </p>
+    </section>
+
+    <section class="card">
+      <h2>学习资料</h2>
+      <p class="hint">
+        笔记与长期概览仅保存在当前设备，卸载扩展后将由浏览器一并清除。
+        导出的备份不含 API 密钥。恢复时与本机已有数据合并，相同条目以更新时间较新者为准，
+        本机独有的条目不会被删除。
+      </p>
+      <div class="actions">
+        <button id="backupExportBtn" class="ghost-btn" type="button">导出备份</button>
+        <button id="backupImportBtn" class="ghost-btn" type="button">恢复备份</button>
+        <input id="backupImportInput" type="file" accept="application/json,.json" hidden>
+        <span id="backupStatus" class="status" role="status"></span>
+      </div>
     </section>
   </main>
 

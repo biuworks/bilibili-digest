@@ -93,6 +93,44 @@ test("迁移可以重复执行，不会改写已迁移数据", async () => {
   assert.deepEqual(storage.data[STORE.NOTES_KEY], [{ id: "note_1", text: "已经迁移" }]);
 });
 
+// 迁移完成后，每次 service worker 启动都会走这条路径。若为此把整个 storage
+// 读出来反序列化，缓存越多启动越慢，也越容易在读完前被浏览器回收（`No SW`）。
+test("已迁移时只读版本标记，不会全量读取存储", async () => {
+  const storage = memoryStorage({
+    [STORE.META_KEY]: { schemaVersion: STORE.SCHEMA_VERSION, migratedAt: 1000 },
+    [STORE.NOTES_KEY]: [{ id: "note_1", text: "已经迁移" }],
+    digest_BV1xx411c7mD_p1: { timestamp: 1000, analysis: { chapters: [] } },
+  });
+  const requestedKeys = [];
+  const original = storage.get.bind(storage);
+  storage.get = async (key) => {
+    requestedKeys.push(key);
+    return original(key);
+  };
+
+  const result = await STORE.ensureMigrated({ storage, now: 9999 });
+
+  assert.equal(result.migrated, false);
+  assert.deepEqual(requestedKeys, [STORE.META_KEY]);
+});
+
+test("尚未迁移时才会全量读取存储", async () => {
+  const storage = memoryStorage({
+    [STORE.NOTES_KEY]: [{ id: "note_1", bvid: "BV1xx411c7mD", text: "旧笔记" }],
+  });
+  const requestedKeys = [];
+  const original = storage.get.bind(storage);
+  storage.get = async (key) => {
+    requestedKeys.push(key);
+    return original(key);
+  };
+
+  const result = await STORE.ensureMigrated({ storage, now: 9999 });
+
+  assert.equal(result.migrated, true);
+  assert.deepEqual(requestedKeys, [STORE.META_KEY, null]);
+});
+
 test("升级时把旧字幕缓存里的概览转存为长期学习记录", async () => {
   const analysis = { chapters: [{ title: "旧概览" }], keyQuotes: [] };
   const storage = memoryStorage({
@@ -144,6 +182,38 @@ test("概览学习记录按 BV 号和分 P 长期保存，互不覆盖", async (
     analysis,
     updatedAt: 3000,
   });
+});
+
+test("概览失败区间会跟着学习记录保存，成功后清掉", async () => {
+  const storage = memoryStorage();
+  const analysis = { chapters: [{ title: "前半" }], keyQuotes: [] };
+  const failures = [{ index: 1, startSeconds: 600, endSeconds: 1170 }];
+
+  const saved = await STORE.saveLearningRecord(
+    {
+      bvid: "BV1xx411c7mD",
+      page: 1,
+      videoTitle: "视频标题",
+      ownerName: "UP 主",
+      analysis,
+      analysisFailures: failures,
+    },
+    { storage, now: 4000 },
+  );
+  assert.deepEqual(saved.analysisFailures, failures);
+
+  const cleared = await STORE.saveLearningRecord(
+    {
+      bvid: "BV1xx411c7mD",
+      page: 1,
+      videoTitle: "视频标题",
+      ownerName: "UP 主",
+      analysis,
+      analysisFailures: [],
+    },
+    { storage, now: 5000 },
+  );
+  assert.equal(cleared.analysisFailures, undefined);
 });
 
 const NOTE_A = {
@@ -351,4 +421,57 @@ test("章前金句单独成节，含字幕时跟当前视图走", () => {
     markdown,
     /- \[0:08\]\(https:\/\/www\.bilibili\.com\/video\/BV1yy411c7mD\?p=2&t=8\) 先抓住结构。\n  Start with structure\./,
   );
+});
+
+test("笔记搜索匹配正文、标题和 UP 主", () => {
+  assert.equal(STORE.filterNotes([NOTE_A, NOTE_C], "另一部").length, 1);
+  assert.equal(STORE.filterNotes([NOTE_A, NOTE_C], "UP 乙")[0].id, "note_c");
+  assert.equal(STORE.filterNotes([NOTE_A, NOTE_C], "第一个")[0].id, "note_a");
+  assert.equal(STORE.filterNotes([NOTE_A], "   ").length, 1);
+  assert.equal(STORE.filterNotes([NOTE_A], "没有这个词").length, 0);
+});
+
+test("备份不含 AI 草稿，恢复时较新的覆盖、本机多出来的保留", () => {
+  const backup = STORE.buildBackup({
+    notes: [{ ...NOTE_A, pending: true }],
+    learning: [
+      {
+        learningId: "BV1xx411c7mD:p1",
+        bvid: "BV1xx411c7mD",
+        page: 1,
+        analysis: { chapters: [] },
+        updatedAt: 5000,
+      },
+    ],
+    exportedAt: "2026-08-22T00:00:00.000Z",
+  });
+  assert.equal(backup.kind, STORE.BACKUP_KIND);
+  assert.equal(backup.notes[0].aiDraft, undefined);
+  assert.equal(backup.notes[0].pending, undefined);
+  assert.doesNotMatch(JSON.stringify(backup), /sk-/);
+
+  const parsed = STORE.parseBackup({ foo: 1 });
+  assert.equal(parsed.ok, false);
+
+  const tooNew = STORE.parseBackup({ ...backup, schemaVersion: 99 });
+  assert.equal(tooNew.error, "BACKUP_TOO_NEW");
+
+  const merged = STORE.mergeBackup(
+    [{ id: "note_a", text: "本机较新", updatedAt: 9000 }, { id: "keep_me", text: "留下" }],
+    [
+      {
+        learningId: "BV1xx411c7mD:p1",
+        bvid: "BV1xx411c7mD",
+        page: 1,
+        analysis: { chapters: [{ title: "旧" }] },
+        updatedAt: 1000,
+      },
+    ],
+    backup,
+  );
+  assert.equal(merged.notes.find((note) => note.id === "keep_me").text, "留下");
+  assert.equal(merged.notes.find((note) => note.id === "note_a").text, "本机较新");
+  assert.equal(merged.learning[0].updatedAt, 5000);
+  assert.equal(merged.notesAdded, 0);
+  assert.equal(merged.learningUpdated, 1);
 });
