@@ -1548,10 +1548,7 @@ function hideQaHint() {
 function appendAnswerText(node, answer, clickableSeconds) {
   const clickable = new Set(clickableSeconds || []);
   // 渲染时再兜一次：修复前入库的历史回答可能带着成对引号。
-  const clean = String(answer || "")
-    .trim()
-    .replace(/^[“"']+\s*/, "")
-    .replace(/[”"']+\s*$/, "");
+  const clean = BILI_QA_CITATIONS.stripWrappingQuotes(answer);
   node.textContent = "";
   for (const segment of BILI_QA_CITATIONS.splitAnswerByTimestamps(clean)) {
     if (segment.seconds == null) {
