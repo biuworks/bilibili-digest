@@ -476,40 +476,30 @@ function segmentDisplayText(segment) {
 }
 
 // 把文字写进节点，命中搜索词的部分套上 <mark>。字幕是外部内容，
-// 一律 textContent 逐节点写、不拼 HTML；没有搜索词时走快路径。
+// 一律 textContent 逐节点写、不拼 HTML；切片逻辑统一走 lib/highlight.js
+// （与笔记搜索同一套匹配语义），这里只负责按字幕的样式拼装节点。
 function writeText(node, text) {
-  const query = state.searchQuery;
   const source = String(text || "");
-  if (!query) {
+  const segments = BILI_HIGHLIGHT.splitMatches(source, state.searchQuery);
+  if (!BILI_HIGHLIGHT.hasMatch(segments)) {
+    // 一条也没命中：双语的另一行命中了，这一行照常显示。
     node.textContent = source;
     return;
   }
 
-  const lower = source.toLowerCase();
-  let cursor = 0;
   node.textContent = "";
-  for (let at = lower.indexOf(query); at >= 0; at = lower.indexOf(query, cursor)) {
-    if (at > cursor) {
+  for (const segment of segments) {
+    if (!segment.text) continue;
+    if (segment.hit) {
+      const hit = document.createElement("mark");
+      hit.className = "search-hit";
+      hit.textContent = segment.text;
+      node.appendChild(hit);
+    } else {
       const plain = document.createElement("span");
-      plain.textContent = source.slice(cursor, at);
+      plain.textContent = segment.text;
       node.appendChild(plain);
     }
-    const hit = document.createElement("mark");
-    hit.className = "search-hit";
-    hit.textContent = source.slice(at, at + query.length);
-    node.appendChild(hit);
-    cursor = at + query.length;
-  }
-
-  // 一条也没命中：双语的另一行命中了，这一行照常显示。
-  if (cursor === 0) {
-    node.textContent = source;
-    return;
-  }
-  if (cursor < source.length) {
-    const tail = document.createElement("span");
-    tail.textContent = source.slice(cursor);
-    node.appendChild(tail);
   }
 }
 
