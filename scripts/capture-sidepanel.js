@@ -11,8 +11,8 @@
  * 输出 README 用的竖版原图。商店合成图最多 6 张（Chrome 5 / Edge 6），
  * 由 scripts/make-store-screenshots.py 从这里挑选，不要直接往商店目录加第 7 张。
  *
- * 输出：imgs/transcript.png、overview.png、explain.png、notes.png、notes-refine.png、
- *       notes-search.png、learning-export.png
+ * 输出：imgs/transcript.png、overview.png、qa.png、explain.png、notes.png、
+ *       notes-refine.png、notes-search.png、learning-export.png
  */
 "use strict";
 
