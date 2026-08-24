@@ -34,7 +34,7 @@ function makeService({ reply } = {}) {
   });
 }
 
-test("剥掉模型包在回答外面的成对引号", async () => {
+test("回答原样透传，不做二次加工", async () => {
   let captured = false;
   const idb = createMemoryIndexedDb();
   const service = QA_SERVICE.createQaService({
@@ -65,7 +65,11 @@ test("剥掉模型包在回答外面的成对引号", async () => {
 
   const result = await service.askQuestion({ bvid: "BV1xx411c7mD", page: 1, question: "问题" });
   assert.equal(result.success, true, JSON.stringify(result));
-  assert.equal(result.entry.answer, "结论 [0:02]。", "外层引号应被剥掉");
+  assert.equal(
+    result.entry.answer,
+    "  “结论 [0:02]。”  ",
+    "模型输出原样保存，渲染层的样式归渲染层管",
+  );
   assert.deepEqual(result.entry.citations, [
     { startSeconds: 2, quote: "字幕句子" },
   ], "依据由本地从字幕提取");

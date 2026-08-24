@@ -96,25 +96,3 @@ test("splitAnswerByTimestamps：单点、区间、混合与无时间戳", () => 
     [60, 90],
   );
 });
-
-test("stripWrappingQuotes 覆盖全部常见引号码位", () => {
-  const pairs = [
-    ["\u0022", "\u0022"],
-    ["\u201C", "\u201D"],
-    ["\uFF02", "\uFF02"],
-    ["\u201E", "\u201E"],
-    ["\u300C", "\u300D"],
-    ["\u300A", "\u300B"],
-    ["\u201C", "\u0022"],
-  ];
-  for (const [left, right] of pairs) {
-    const stripped = C.stripWrappingQuotes(
-      `${left}回答正文，含 [0:02]。${right}`,
-    );
-    assert.equal(
-      stripped,
-      "回答正文，含 [0:02]。",
-      `${left}…${right} 应被剥掉`,
-    );
-  }
-});

@@ -1169,6 +1169,13 @@ button {
   content: "”";
 }
 
+/* 问答卡片复用 .note 布局但正文是 AI 原创回答，不是字幕摘句，
+   不能继承装饰引号——曾导致剥了模型引号、引号却「还在」的假象 */
+.qa-card .entry-text::before,
+.qa-card .entry-text::after {
+  content: none;
+}
+
 .note-editor {
   margin-top: 8px;
 }
