@@ -213,6 +213,27 @@ const OTHER_NOTES = [
   },
 ];
 
+// 「问答」标签页的桩：askQuestion 直接返回成品卡片，不走真模型。
+const QA_ENTRY = {
+  id: "qa_shot",
+  bvid: BVID,
+  page: 1,
+  question: "这堂课的核心学习方法是什么？",
+  answer:
+    "核心是「先搭章节地图，再往里挂概念」[0:32]，配合间隔重复来对抗遗忘 [1:34]；检验标准是能把内容说给别人听 [3:12]。",
+  citations: [
+    { startSeconds: 32, quote: "先画出章节地图，再往里面挂概念和金句。" },
+    {
+      startSeconds: 94,
+      quote: "间隔重复：隔一会儿用自己的话复述，不要当场连抄三遍。",
+    },
+    { startSeconds: 192, quote: "复述要说给人听。说不顺，就是还没真懂。" },
+  ],
+  clickable: [32, 94, 192],
+  createdAt: Date.now(),
+};
+
+
 const FIXTURE = {
   bvid: BVID,
   url: `https://www.bilibili.com/video/${BVID}`,
@@ -232,11 +253,13 @@ const FIXTURE = {
     analysis: ANALYSIS,
   },
   notes: [...NOTES, ...OTHER_NOTES],
+  qaEntry: QA_ENTRY,
 };
 
 const SHOTS = [
   "transcript.png",
   "overview.png",
+  "qa.png",
   "explain.png",
   "notes.png",
   "notes-refine.png",
@@ -413,6 +436,11 @@ async function main() {
             return { success: true, notes };
           }
           if (message?.action === "checkVideoAvailable") return { available: true };
+          if (message?.action === "getQaHistory") return { success: true, entries: [] };
+          if (message?.action === "startAiTask") return { success: true };
+          if (message?.action === "askQuestion") {
+            return { success: true, entry: fixture.qaEntry };
+          }
           if (message?.action === "explainSelection") {
             return {
               success: true,
@@ -484,6 +512,16 @@ async function main() {
   await fitPanel(page);
   await shot(page, "overview.png");
 
+  // 问答：提问后的成品卡——时间戳可点、引用原句可见。
+  await page.click('.tab[data-tab="qa"]');
+  await page.waitForSelector("#qaPanel:not([hidden])");
+  await page.fill("#qaInput", "这堂课的核心学习方法是什么？");
+  await page.click("#qaAskBtn");
+  await page.waitForSelector("#qaList .qa-card");
+  await freezePlayback(page);
+  await fitPanel(page);
+  await shot(page, "qa.png");
+
   await page.click('.tab[data-tab="transcript"]');
   await page.waitForSelector("#transcriptList .segment");
   await freezePlayback(page);
@@ -514,7 +552,9 @@ async function main() {
   await page.waitForFunction(
     () => document.querySelectorAll("#notesList .note").length === 6,
   );
-  await page.fill("#notesSearchInput", "学习方法实验室");
+  // 搜「复述」而不是 UP 主：两条笔记正文出现粉色命中高亮，
+  // 正好展示本版的搜索高亮能力。
+  await page.fill("#notesSearchInput", "复述");
   await page.waitForFunction(
     () => document.getElementById("notesSearchCount").textContent.includes("条匹配"),
   );

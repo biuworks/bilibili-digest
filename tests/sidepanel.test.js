@@ -210,7 +210,7 @@ function createContext({
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground, submitQuestion, switchTab };`,
+    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground, submitQuestion, switchTab, appendAnswerText };`,
     context,
   );
 
@@ -1712,3 +1712,18 @@ test("问答卡片只有复制操作，且有成功反馈", async () => {
   assert.match(ctx.el("toast").textContent, /已复制/);
 });
 
+
+test("回答正文支持区间时间戳：显示区间、跳到起点", () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  const node = createElement("div");
+  ctx.appendAnswerText(node, "依据见 [0:11-0:23] 与 [9:99] 越界", new Set([11]));
+
+  const buttons = node.children.filter((child) => child.tagName === "button");
+  assert.equal(buttons.length, 1, "越界的时间戳不渲染成按钮");
+  assert.equal(buttons[0].textContent, "[0:11-0:23]");
+  // 桩的 textContent 不聚合子节点，从 children 重建全文核对。
+  const rendered = node.children
+    .map((child) => (typeof child === "string" ? child : child.textContent))
+    .join("");
+  assert.equal(rendered, "依据见 [0:11-0:23] 与 [9:99] 越界");
+});

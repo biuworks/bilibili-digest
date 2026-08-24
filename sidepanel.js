@@ -1540,25 +1540,23 @@ function hideQaHint() {
   el("qaHint").hidden = true;
 }
 
-/** 回答正文里的 [M:SS] 渲染成可点击的时间戳按钮；越界的保留纯文本。 */
+/**
+ * 回答正文里的时间戳渲染成可点击按钮：单点与区间都支持
+ * （区间显示原样文本、跳到起点）；不在合法区间的保留纯文本。
+ * 切片逻辑在 lib/qa-citations.js，这里只负责拼节点。
+ */
 function appendAnswerText(node, answer, clickableSeconds) {
-  const source = String(answer || "");
-  node.textContent = "";
-  let cursor = 0;
-  const pattern = /\[(\d{1,3}:[0-5]\d)\]/g;
   const clickable = new Set(clickableSeconds || []);
-  for (const match of source.matchAll(pattern)) {
-    const seconds = BILI_QA_CITATIONS.timestampToSeconds(match[1]);
-    const at = match.index;
-    if (at > cursor) node.append(source.slice(cursor, at));
-    if (seconds !== null && clickable.has(seconds)) {
-      node.append(makeTimestampButton(match[1], seconds));
+  node.textContent = "";
+  for (const segment of BILI_QA_CITATIONS.splitAnswerByTimestamps(answer)) {
+    if (segment.seconds == null) {
+      node.append(segment.text);
+    } else if (clickable.has(segment.seconds)) {
+      node.append(makeTimestampButton(segment.text, segment.seconds));
     } else {
-      node.append(match[0]);
+      node.append(segment.text);
     }
-    cursor = at + match[0].length;
   }
-  if (cursor < source.length) node.append(source.slice(cursor));
 }
 
 function makeTimestampButton(label, seconds) {

@@ -15,8 +15,8 @@ test("时间戳解析：M:SS 双向转换，非法输入拒绝", () => {
 test("extractTimestamps 抽出全部合法 token", () => {
   const found = C.extractTimestamps("开头 [0:32] 中间 [12:00] 结尾 [bad]");
   assert.deepEqual(found, [
-    { raw: "0:32", seconds: 32 },
-    { raw: "12:00", seconds: 720 },
+    { raw: "[0:32]", seconds: 32 },
+    { raw: "[12:00]", seconds: 720 },
   ]);
 });
 
@@ -86,4 +86,28 @@ test("clickableTimestamps 返回落在区间内的秒数集合", () => {
   );
   assert.ok(clickable.has(10));
   assert.ok(!clickable.has(150), "2:30 = 150s 超出 max 130");
+});
+
+test("extractTimestamps 支持区间格式，取起点", () => {
+  const found = C.extractTimestamps("依据见 [0:11-0:23] 与单点 [2:00]");
+  assert.deepEqual(found, [
+    { raw: "[0:11-0:23]", seconds: 11 },
+    { raw: "[2:00]", seconds: 120 },
+  ]);
+});
+
+test("splitAnswerByTimestamps：单点、区间、混合与无时间戳", () => {
+  assert.deepEqual(C.splitAnswerByTimestamps("结论 [0:11-0:23] 收尾"), [
+    { text: "结论 " },
+    { text: "[0:11-0:23]", seconds: 11 },
+    { text: " 收尾" },
+  ]);
+  assert.deepEqual(C.splitAnswerByTimestamps("没有时间戳"), [
+    { text: "没有时间戳" },
+  ]);
+  const mixed = C.splitAnswerByTimestamps("[1:00]和[1:30-2:00]");
+  assert.deepEqual(
+    mixed.filter((segment) => segment.seconds != null).map((s) => s.seconds),
+    [60, 90],
+  );
 });
