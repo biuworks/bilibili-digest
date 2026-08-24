@@ -11,32 +11,13 @@ const AI = require("../lib/ai.js");
 const SETTINGS = require("../settings.js");
 const AI_PROVIDER = require("../lib/ai-provider.js");
 const TASKS = require("../lib/task-manager.js");
+const NOTE_DB = require("../lib/note-db.js");
+const IDB = require("../lib/idb.js");
+const { createMemoryIndexedDb } = require("./helpers/memory-idb.js");
+const { memoryStorage } = require("./helpers/memory-storage.js");
 
 const ROOT = path.join(__dirname, "..");
 const BVID = "BV1xx411c7mD";
-
-function memoryStorage(initial = {}) {
-  const data = structuredClone(initial);
-  return {
-    data,
-    setAccessLevel: async () => {},
-    async get(key) {
-      if (key === null || key === undefined) return structuredClone(data);
-      const keys = Array.isArray(key) ? key : [key];
-      const result = {};
-      for (const item of keys) {
-        if (item in data) result[item] = structuredClone(data[item]);
-      }
-      return result;
-    },
-    async set(entries) {
-      Object.assign(data, structuredClone(entries));
-    },
-    async remove(key) {
-      for (const item of Array.isArray(key) ? key : [key]) delete data[item];
-    },
-  };
-}
 
 function createBackground({
   initial = {},
@@ -58,6 +39,7 @@ function createBackground({
   }
   const cacheStore = {};
   if (cached) cacheStore[`${BVID}:1`] = structuredClone(cached);
+  const idb = createMemoryIndexedDb();
   let messageListener;
   const broadcasts = [];
   const context = {
@@ -66,6 +48,7 @@ function createBackground({
     clearTimeout,
     AbortController,
     TextDecoder,
+    indexedDB: idb,
     fetch: async (url, options = {}) => {
       const target = String(url);
       if (target.startsWith("prompts/")) {
@@ -117,6 +100,8 @@ function createBackground({
     BILI_CONCURRENCY: CONCURRENCY,
     BILI_TRANSCRIPT: TRANSCRIPT,
     BILI_CACHE: {
+      // 迁移链会调用；缓存本身的 IndexedDB 路径由 cache.test.js 覆盖。
+      ensureCacheInIdb: async () => ({ migrated: false }),
       load: async (bvid, { page = 1 } = {}) => {
         const key = `${bvid}:${page}`;
         return cacheStore[key] ? structuredClone(cacheStore[key]) : null;
@@ -136,6 +121,8 @@ function createBackground({
     BILI_AI: AI,
     BILI_AI_PROVIDER: AI_PROVIDER,
     BILI_TASKS: TASKS,
+    BILI_NOTE_DB: NOTE_DB,
+    BILI_IDB: IDB,
   };
   context.globalThis = context;
   vm.createContext(context);
@@ -151,7 +138,21 @@ function createBackground({
     });
   }
 
-  return { storage, send, broadcasts };
+  return { storage, send, broadcasts, idb };
+}
+
+// 笔记的正牌后端在沙箱的假 IndexedDB 里，用同一套真实驱动读出来断言。
+function notesRepository(idb) {
+  return NOTE_DB.createNotesRepository({
+    driver: NOTE_DB.createIndexedDbDriver({ indexedDB: idb }),
+  });
+}
+
+// 概览快照同理。
+function learningRepository(idb) {
+  return LEARNING_STORE.createLearningRepository({
+    driver: IDB.createObjectStoreDriver({ storeName: "learning", indexedDB: idb }),
+  });
 }
 
 // MV3 只为「正在处理的事件」保活 service worker。顶层发起的异步调用一旦
@@ -195,7 +196,9 @@ test("迁移失败后不会卡在降级状态，下一次操作会重试", async
   await ctx.send({ action: "getNotes", bvid: BVID, page: 1 });
   await ctx.send({ action: "getNotes", bvid: BVID, page: 1 });
 
-  assert.equal(metaReads, 2, "一次偶发失败不该让这条 worker 上的后续操作一直降级");
+  // 成功路径的迁移链各读一次 meta：v2 数据 → 笔记 → 概览快照（缓存迁移在
+  // 本沙箱里是桩）。首次偶发失败重试后再各读一次，合计 4。
+  assert.equal(metaReads, 4, "一次偶发失败不该让这条 worker 上的后续操作一直降级");
   assert.equal(
     storage.data[LEARNING_STORE.META_KEY].schemaVersion,
     LEARNING_STORE.SCHEMA_VERSION,
@@ -282,7 +285,8 @@ test("取消笔记优化会中止真实模型请求，且不会保存半成品�
 
   assert.equal(result.success, false);
   assert.equal(result.error, "TASK_CANCELED");
-  assert.equal(ctx.storage.data[LEARNING_STORE.NOTES_KEY][0].aiDraft, undefined);
+  const notes = await notesRepository(ctx.idb).all();
+  assert.equal(notes.find((note) => note.id === "note_1").aiDraft, undefined);
   assert.deepEqual((await ctx.send({ action: "getAiTasks" })).tasks, []);
 });
 
@@ -367,10 +371,11 @@ test("导出备份不含设置密钥，导入按较新时间合并", async () =>
   assert.equal(imported.success, true);
   assert.equal(imported.notesAdded, 0);
   assert.equal(imported.notesUpdated, 1);
-  const notes = ctx.storage.data[LEARNING_STORE.NOTES_KEY];
+  const notes = await notesRepository(ctx.idb).all();
   assert.equal(notes.find((note) => note.id === "local").text, "本机独有");
   assert.equal(notes.find((note) => note.id === "shared").text, "备份新文");
-  assert.equal(ctx.storage.data[learningKey].analysis.chapters[0].title, "新章");
+  const learning = await learningRepository(ctx.idb).find(`${BVID}:p1`);
+  assert.equal(learning.analysis.chapters[0].title, "新章");
   assert.equal(ctx.storage.data[SETTINGS.STORAGE_KEY].aiApiKey, "sk-secret");
 });
 
@@ -414,7 +419,8 @@ test("笔记正文可以更新，并记录更新时间", async () => {
   assert.equal(result.note.contentSource, "user");
   assert.equal(result.note.aiDraft, undefined);
   assert.ok(result.note.updatedAt >= result.note.createdAt);
-  assert.equal(ctx.storage.data[LEARNING_STORE.NOTES_KEY][0].text, "修改后的正文");
+  const stored = await notesRepository(ctx.idb).all();
+  assert.equal(stored[0].text, "修改后的正文");
 });
 
 test("AI 优化只生成候选，不直接覆盖当前笔记", async () => {
@@ -614,8 +620,9 @@ test("采用候选前正文又被修改时返回冲突，不覆盖任何内容",
 
   assert.equal(result.success, false);
   assert.equal(result.error, "NOTE_CONFLICT");
-  assert.equal(ctx.storage.data[LEARNING_STORE.NOTES_KEY][0].text, "更新后的正文");
-  assert.equal(ctx.storage.data[LEARNING_STORE.NOTES_KEY][0].aiDraft.text, "旧候选");
+  const kept = await notesRepository(ctx.idb).all();
+  assert.equal(kept[0].text, "更新后的正文");
+  assert.equal(kept[0].aiDraft.text, "旧候选");
 });
 
 test("空正文和不存在的笔记不会被写入", async () => {
@@ -636,7 +643,8 @@ test("空正文和不存在的笔记不会被写入", async () => {
 
   assert.equal(empty.error, "EMPTY_NOTE");
   assert.equal(missing.error, "NOTE_NOT_FOUND");
-  assert.equal(ctx.storage.data[LEARNING_STORE.NOTES_KEY][0].text, "保留");
+  const kept = await notesRepository(ctx.idb).all();
+  assert.equal(kept[0].text, "保留");
 });
 
 test("超过 100 条后继续保存，不再静默删除最旧笔记", async () => {
@@ -665,8 +673,9 @@ test("超过 100 条后继续保存，不再静默删除最旧笔记", async () 
   });
 
   assert.equal(result.success, true);
-  assert.equal(ctx.storage.data[LEARNING_STORE.NOTES_KEY].length, 101);
-  assert.ok(ctx.storage.data[LEARNING_STORE.NOTES_KEY].some((note) => note.id === "note_0"));
+  const notes = await notesRepository(ctx.idb).all();
+  assert.equal(notes.length, 101);
+  assert.ok(notes.some((note) => note.id === "note_0"));
 });
 
 test("存储空间不足时明确报错，并保留已有笔记", async () => {
@@ -678,21 +687,18 @@ test("存储空间不足时明确报错，并保留已有笔记", async () => {
     text: `笔记 ${index}`,
     createdAt: 1000 + index,
   }));
-  const storage = memoryStorage({ [LEARNING_STORE.NOTES_KEY]: existing });
-  const set = storage.set.bind(storage);
-  storage.set = async (entries) => {
-    if (entries[LEARNING_STORE.NOTES_KEY]?.length > 100) {
-      throw new Error("QUOTA_BYTES quota exceeded");
-    }
-    return set(entries);
-  };
   const ctx = createBackground({
-    storage,
+    initial: { [LEARNING_STORE.NOTES_KEY]: existing },
     cached: {
       transcript: [{ from: 0, to: 200, content: "字幕" }],
       videoInfo: { title: "标题", owner: "UP 主" },
     },
   });
+
+  // 先让迁移把旧笔记搬进 IndexedDB，再注入下一次写失败——
+  // 否则失败会被迁移消费掉，走的是「迁移降级」而不是「写入报错」。
+  assert.equal((await ctx.send({ action: "getNotes" })).success, true);
+  ctx.idb.__failNextWrite(new Error("QUOTA_BYTES quota exceeded"));
 
   const result = await ctx.send({
     action: "saveNote",
@@ -705,7 +711,9 @@ test("存储空间不足时明确报错，并保留已有笔记", async () => {
   assert.equal(result.success, false);
   assert.equal(result.error, "STORAGE_FULL");
   assert.match(result.message, /空间/);
-  assert.equal(storage.data[LEARNING_STORE.NOTES_KEY].length, 100);
+  const notes = await notesRepository(ctx.idb).all();
+  assert.equal(notes.length, 100, "已有笔记一条不少");
+  assert.equal(ctx.storage.data[LEARNING_STORE.NOTES_KEY], undefined, "迁移完成后旧 key 不再保留");
 });
 
 test("字幕缓存没有概览时，会恢复长期保存的概览", async () => {
@@ -773,7 +781,7 @@ test("部分概览分块失败会保存失败区间，补失败块只请求失�
   assert.equal(first.analysis.chapters[0].title, "前半");
   assert.equal(first.analysisFailures.length, 1);
   assert.ok(first.analysisFailures[0].startSeconds > 0);
-  const learning = ctx.storage.data[LEARNING_STORE.learningKey(BVID, 1)];
+  let learning = await learningRepository(ctx.idb).find(`${BVID}:p1`);
   assert.equal(learning.analysisFailures.length, 1);
 
   failSecond = false;
@@ -786,5 +794,6 @@ test("部分概览分块失败会保存失败区间，补失败块只请求失�
     ["前半", "后半"],
   );
   assert.equal(retried.failedChunks, 0);
-  assert.equal(ctx.storage.data[LEARNING_STORE.learningKey(BVID, 1)].analysisFailures, undefined);
+  learning = await learningRepository(ctx.idb).find(`${BVID}:p1`);
+  assert.equal(learning.analysisFailures, undefined);
 });

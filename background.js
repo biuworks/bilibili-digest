@@ -8,12 +8,17 @@ importScripts(
   "lib/wbi.js",
   "lib/bili-api.js",
   "lib/transcript.js",
-  "lib/cache.js",
   "lib/ai.js",
   "lib/ai-provider.js",
   "lib/concurrency.js",
   "lib/task-manager.js",
+  // 依赖顺序是硬约束：模块顶层的 typeof 守卫在 importScripts 里立即求值，
+  // 被依赖的文件必须先加载，否则 service worker 直接注册失败。
+  // 各文件的依赖以其 require 声明为准，manifest.test.js 会校验顺序。
+  "lib/idb.js",
   "lib/learning-store.js",
+  "lib/cache.js",
+  "lib/note-db.js",
 );
 
 const DEBUG = false;
@@ -27,7 +32,6 @@ const AI_IDLE_TIMEOUT_MS = 50_000;
 const AI_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 // 加码重试的天花板。再往上多数模型会因超过自身输出上限直接拒绝请求。
 const MAX_OUTPUT_TOKENS = 32_768;
-const NOTES_STORAGE_KEY = BILI_LEARNING_STORE.NOTES_KEY;
 
 const AI_TASK_KINDS = new Set(["analysis", "polish", "translate", "note-refine"]);
 const aiTasks = BILI_TASKS.createTaskManager({
@@ -108,16 +112,58 @@ function restrictStorageAccess() {
 
 const learningStorage = chrome.storage.local;
 
-// 旧版本直接把笔记数组写在 storage.local。所有读写都等这次轻量迁移完成，
-// 避免升级后的第一个操作和迁移同时改写数据。整个 worker 生命周期只跑一次，
-// 但失败时要把记忆清掉：否则一次偶发失败会让这条 worker 上的后续操作
-// 全部停在降级状态，直到浏览器下次回收它为止。
+// 笔记与概览快照的正牌后端是 IndexedDB（见 lib/note-db.js / lib/learning-store.js），
+// 连接整个 worker 生命周期复用。indexedDB 在这里显式传入而不是让驱动自己摸全局：
+// 模块文件在测试里是跨 realm 加载的，宿主的 globalThis 上没有它。
+let notesRepo = null;
+function notesRepository() {
+  if (!notesRepo) {
+    notesRepo = BILI_NOTE_DB.createNotesRepository({
+      driver: BILI_NOTE_DB.createIndexedDbDriver({
+        indexedDB: globalThis.indexedDB,
+      }),
+    });
+  }
+  return notesRepo;
+}
+
+let learningRepo = null;
+function learningRepository() {
+  if (!learningRepo) {
+    learningRepo = BILI_LEARNING_STORE.createLearningRepository({
+      driver: BILI_IDB.createObjectStoreDriver({
+        storeName: "learning",
+        indexedDB: globalThis.indexedDB,
+      }),
+    });
+  }
+  return learningRepo;
+}
+
+// 旧版本把笔记数组写在 storage.local，再往前连概览都挤在字幕缓存里。所有
+// 读写都等这条迁移链完成：v2 数据迁移 → 笔记 → 字幕缓存 → 概览快照，
+// 前一步是后一步的数据来源（v2 提升的概览要等最后一步统一搬走）。
+// 整个 worker 生命周期只跑一次，但失败时要把记忆清掉：否则一次偶发失败会让
+// 这条 worker 上的后续操作全部停在降级状态，直到浏览器下次回收它为止。
 let learningMigration = null;
 function learningDataReady() {
   if (!learningMigration) {
-    learningMigration = BILI_LEARNING_STORE.ensureMigrated({
-      storage: learningStorage,
-    }).catch((error) => {
+    learningMigration = (async () => {
+      await BILI_LEARNING_STORE.ensureMigrated({
+        storage: learningStorage,
+      });
+      await BILI_NOTE_DB.ensureNotesInIdb({
+        storage: learningStorage,
+        repository: notesRepository(),
+      });
+      await BILI_CACHE.ensureCacheInIdb({
+        storage: learningStorage,
+      });
+      await BILI_LEARNING_STORE.ensureLearningInIdb({
+        storage: learningStorage,
+        repository: learningRepository(),
+      });
+    })().catch((error) => {
       console.error("[Bilibili Digest] 学习资料迁移失败：", error);
       learningMigration = null;
       // 迁移失败也先让旧笔记可读；后续写入会给出明确错误，不能因为升级元数据
@@ -514,13 +560,13 @@ async function restoreLearningAnalysis(payload, bvid, page) {
     if (Array.isArray(payload.analysisFailures)) return payload;
     await learningDataReady();
     const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, page, {
-      storage: learningStorage,
+      repository: learningRepository(),
     });
     return { ...payload, analysisFailures: failuresOf(record) };
   }
   await learningDataReady();
   const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, page, {
-    storage: learningStorage,
+    repository: learningRepository(),
   });
   if (!record?.analysis) return payload;
   return {
@@ -846,7 +892,7 @@ async function handleAnalyzeTranscript(
   if (!forceRefresh) {
     await learningDataReady();
     const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, pageNumber, {
-      storage: learningStorage,
+      repository: learningRepository(),
     });
     if (record?.analysis) {
       const failures = Array.isArray(record.analysisFailures) ? record.analysisFailures : [];
@@ -954,7 +1000,7 @@ async function handleRetryFailedAnalysis(bvidInput, { page = 1, signal, taskId }
 
   await learningDataReady();
   const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, pageNumber, {
-    storage: learningStorage,
+    repository: learningRepository(),
   });
   const existing = transcript.analysis || record?.analysis;
   const storedFailures = Array.isArray(transcript.analysisFailures) && transcript.analysisFailures.length
@@ -1059,7 +1105,7 @@ async function persistAnalysisSnapshot(bvid, pageNumber, transcript, analysis, a
       analysis,
       analysisFailures,
     },
-    { storage: learningStorage },
+    { repository: learningRepository() },
   );
 }
 
@@ -1380,13 +1426,38 @@ function noteWriteErrorResponse(error) {
   };
 }
 
+/**
+ * 笔记的「读—改—写」在 IndexedDB 上仍要走串行队列：润色是保存后异步落笔的，
+ * 会和新增 / 删除并发，IndexedDB 的事务只保证单次 write 原子，管不了
+ * 跨 await 的读改写竞态。
+ *
+ * 提交按引用相等做增量 diff：mutator 必须原样返回未改动项的同一引用
+ * （现有各处都是 spread 出新对象表示「改了」），这样一次编辑只重写真正
+ * 变化的那几条，而不是把整库 put 一遍。
+ */
 function mutateNotes(mutate) {
   return notesWriteQueue(async () => {
     await learningDataReady();
-    const stored = await chrome.storage.local.get(NOTES_STORAGE_KEY);
-    const notes = Array.isArray(stored[NOTES_STORAGE_KEY]) ? stored[NOTES_STORAGE_KEY] : [];
-    const next = mutate(notes);
-    await chrome.storage.local.set({ [NOTES_STORAGE_KEY]: next });
+    const repository = notesRepository();
+    const current = await repository.all();
+    // 交给 mutator 的是副本：有的调用方会原地改数组（比如 unshift 新笔记），
+    // 不能让它污染用来做对照的快照。数组里装的是引用，复制本身不贵。
+    const next = mutate([...current]);
+    if (!Array.isArray(next)) {
+      throw new Error("笔记变更加工没有返回列表");
+    }
+
+    const nextIds = new Set(next.filter((note) => note?.id).map((note) => note.id));
+    const remove = current
+      .filter((note) => !nextIds.has(note.id))
+      .map((note) => note.id);
+    const currentById = new Map(current.map((note) => [note.id, note]));
+    const put = next.filter(
+      (note) => note?.id && currentById.get(note.id) !== note,
+    );
+    if (put.length || remove.length) {
+      await repository.commit({ put, remove });
+    }
     return next;
   });
 }
@@ -1570,7 +1641,7 @@ async function handleSaveNote({ bvid: bvidInput, page = 1, timestamp, text: manu
         ownerName: transcript.videoInfo?.owner || "",
         analysis: transcript.analysis,
       },
-      { storage: learningStorage },
+      { repository: learningRepository() },
     ).catch((error) =>
       console.warn("[Bilibili Digest] 概览长期保存失败：", error),
     );
@@ -1581,8 +1652,7 @@ async function handleSaveNote({ bvid: bvidInput, page = 1, timestamp, text: manu
 
 async function handleGetNotes(bvidInput, page) {
   await learningDataReady();
-  const stored = await chrome.storage.local.get(NOTES_STORAGE_KEY);
-  const notes = Array.isArray(stored[NOTES_STORAGE_KEY]) ? stored[NOTES_STORAGE_KEY] : [];
+  const notes = await notesRepository().all();
   const bvid = bvidInput ? BILI_API.parseBvid(bvidInput) : null;
   const pageNumber = Number(page) > 0 ? Math.floor(Number(page)) : null;
   return {
@@ -1600,13 +1670,13 @@ async function handleGetNotes(bvidInput, page) {
 
 async function handleExportLearningBackup() {
   await learningDataReady();
-  const all = await chrome.storage.local.get(null);
+  const [notes, learning] = await Promise.all([
+    notesRepository().all(),
+    learningRepository().all(),
+  ]);
   return {
     success: true,
-    backup: BILI_LEARNING_STORE.buildBackup({
-      notes: all[NOTES_STORAGE_KEY],
-      learning: BILI_LEARNING_STORE.collectLearningRecords(all),
-    }),
+    backup: BILI_LEARNING_STORE.buildBackup({ notes, learning }),
   };
 }
 
@@ -1614,17 +1684,17 @@ async function handleImportLearningBackup(payload) {
   await learningDataReady();
   const parsed = BILI_LEARNING_STORE.parseBackup(payload);
   if (!parsed.ok) return { success: false, error: parsed.error, message: parsed.message };
-  const all = await chrome.storage.local.get(null);
-  const merged = BILI_LEARNING_STORE.mergeBackup(
-    all[NOTES_STORAGE_KEY],
-    BILI_LEARNING_STORE.collectLearningRecords(all),
-    parsed.backup,
-  );
-  const writes = { [NOTES_STORAGE_KEY]: merged.notes };
-  for (const record of merged.learning) {
-    writes[BILI_LEARNING_STORE.learningKey(record.bvid, record.page)] = record;
+  const [notes, learning] = await Promise.all([
+    notesRepository().all(),
+    learningRepository().all(),
+  ]);
+  const merged = BILI_LEARNING_STORE.mergeBackup(notes, learning, parsed.backup);
+  // 笔记与概览各自单事务写入 IndexedDB。中途失败重跑导入即可：
+  // 合并按 updatedAt 取新，天然幂等。
+  if (merged.learning.length) {
+    await learningRepository().commit({ put: merged.learning });
   }
-  await chrome.storage.local.set(writes);
+  await notesRepository().commit({ put: merged.notes });
   chrome.runtime.sendMessage({ action: "notesImported" }).catch(() => {});
   return {
     success: true,
@@ -1693,8 +1763,7 @@ async function handleGenerateNoteDraft(noteId, { signal, taskId } = {}) {
     });
   }
   await learningDataReady();
-  const stored = await chrome.storage.local.get(NOTES_STORAGE_KEY);
-  const notes = Array.isArray(stored[NOTES_STORAGE_KEY]) ? stored[NOTES_STORAGE_KEY] : [];
+  const notes = await notesRepository().all();
   const snapshot = notes.find((note) => note.id === noteId);
   if (!snapshot) {
     return {

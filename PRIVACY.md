@@ -15,14 +15,15 @@
 
 ## 存在你本机的数据
 
-全部写入 `chrome.storage.local`，只保存在你这台设备上，不使用会同步到
+数据只保存在你这台设备上：配置在 `chrome.storage.local`，笔记、字幕缓存
+和 AI 概览快照在扩展自己的 IndexedDB 数据库里，两者都不使用会同步到
 浏览器账号的 `chrome.storage.sync`。卸载扩展时由浏览器一并清除。
 
 | 内容 | 存储键 | 保留期 |
 | --- | --- | --- |
 | 模型服务配置：服务商、API 地址、模型名、并发与超时、**API 密钥** | `bili_digest_settings` | 直到你修改或清空 |
-| 字幕、翻译与 AI 概览的缓存 | `digest_<视频 BV 号>` | 30 天，且最多保留 20 个视频，超出按最早写入淘汰 |
-| 你手动记下的笔记（时间戳、原句、整理后的文字、视频标题与链接） | `bili_digest_notes` | 直到你删除 |
+| 字幕、翻译与 AI 概览的缓存 | 扩展的 IndexedDB（`bili-digest` 库） | 30 天，且最多保留 20 个视频，超出按最早写入淘汰 |
+| 你手动记下的笔记（时间戳、原句、整理后的文字、视频标题与链接） | 扩展的 IndexedDB（`bili-digest` 库） | 直到你删除 |
 
 **关于 API 密钥**：它属于身份验证信息，因此明确告知——密钥仅存于本地，
 仅用于在你发起 AI 功能时向你自己指定的模型服务发起请求，除该服务外不发往任何地址。
@@ -77,9 +78,10 @@ This policy covers both the Chrome and the Edge build — they are the same code
 
 - **No collection**: no personal identifiers, no analytics, no tracking, no ads, no
   browsing history, no sale or transfer of data to anyone. No remotely hosted code.
-- **Stored locally only** (`chrome.storage.local`, never `storage.sync`): AI provider
+- **Stored locally only** (`chrome.storage.local` and the extension's own
+  IndexedDB database, never `storage.sync`): AI provider
   settings including your API key; transcript/overview cache (30-day TTL, 20-video LRU);
-  and notes you create. All removed when you uninstall.
+  overview snapshots; and notes you create. All removed when you uninstall.
 - **Leaves the browser in two cases**: (1) requests to Bilibili's own APIs to fetch video
   metadata and subtitles — the browser attaches your existing Bilibili login cookies
   because subtitles require sign-in; the extension holds no `cookies` permission and

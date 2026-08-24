@@ -2,28 +2,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const STORE = require("../lib/learning-store.js");
-
-function memoryStorage(initial = {}) {
-  const data = structuredClone(initial);
-  return {
-    data,
-    async get(key) {
-      if (key === null || key === undefined) return structuredClone(data);
-      const keys = Array.isArray(key) ? key : [key];
-      const result = {};
-      for (const item of keys) {
-        if (item in data) result[item] = structuredClone(data[item]);
-      }
-      return result;
-    },
-    async set(entries) {
-      Object.assign(data, structuredClone(entries));
-    },
-    async remove(key) {
-      for (const item of Array.isArray(key) ? key : [key]) delete data[item];
-    },
-  };
-}
+const IDB = require("../lib/idb.js");
+const { memoryStorage } = require("./helpers/memory-storage.js");
 
 test("旧版裸数组笔记会原地迁移，并补齐可持续迭代的字段", async () => {
   const storage = memoryStorage({
@@ -157,7 +137,9 @@ test("升级时把旧字幕缓存里的概览转存为长期学习记录", async
 });
 
 test("概览学习记录按 BV 号和分 P 长期保存，互不覆盖", async () => {
-  const storage = memoryStorage();
+  const repository = STORE.createLearningRepository({
+    driver: IDB.createMemoryDriver(),
+  });
   const analysis = { chapters: [{ title: "第一章" }], keyQuotes: [] };
 
   await STORE.saveLearningRecord(
@@ -168,11 +150,14 @@ test("概览学习记录按 BV 号和分 P 长期保存，互不覆盖", async (
       ownerName: "UP 主",
       analysis,
     },
-    { storage, now: 3000 },
+    { repository, now: 3000 },
   );
 
-  assert.equal(await STORE.loadLearningRecord("BV1xx411c7mD", 1, { storage }), null);
-  assert.deepEqual(await STORE.loadLearningRecord("BV1xx411c7mD", 2, { storage }), {
+  assert.equal(
+    await STORE.loadLearningRecord("BV1xx411c7mD", 1, { repository }),
+    null,
+  );
+  assert.deepEqual(await STORE.loadLearningRecord("BV1xx411c7mD", 2, { repository }), {
     schemaVersion: STORE.SCHEMA_VERSION,
     learningId: "BV1xx411c7mD:p2",
     bvid: "BV1xx411c7mD",
@@ -185,7 +170,9 @@ test("概览学习记录按 BV 号和分 P 长期保存，互不覆盖", async (
 });
 
 test("概览失败区间会跟着学习记录保存，成功后清掉", async () => {
-  const storage = memoryStorage();
+  const repository = STORE.createLearningRepository({
+    driver: IDB.createMemoryDriver(),
+  });
   const analysis = { chapters: [{ title: "前半" }], keyQuotes: [] };
   const failures = [{ index: 1, startSeconds: 600, endSeconds: 1170 }];
 
@@ -198,7 +185,7 @@ test("概览失败区间会跟着学习记录保存，成功后清掉", async ()
       analysis,
       analysisFailures: failures,
     },
-    { storage, now: 4000 },
+    { repository, now: 4000 },
   );
   assert.deepEqual(saved.analysisFailures, failures);
 
@@ -211,7 +198,7 @@ test("概览失败区间会跟着学习记录保存，成功后清掉", async ()
       analysis,
       analysisFailures: [],
     },
-    { storage, now: 5000 },
+    { repository, now: 5000 },
   );
   assert.equal(cleared.analysisFailures, undefined);
 });
@@ -474,4 +461,75 @@ test("备份不含 AI 草稿，恢复时较新的覆盖、本机多出来的保�
   assert.equal(merged.learning[0].updatedAt, 5000);
   assert.equal(merged.notesAdded, 0);
   assert.equal(merged.learningUpdated, 1);
+});
+
+// ============================================================
+// 概览快照的 IndexedDB 仓储与一次性迁移
+// ============================================================
+
+function learningRecord(learningId, overrides = {}) {
+  const [bvid, pagePart] = learningId.split(":p");
+  return {
+    schemaVersion: 2,
+    learningId,
+    bvid,
+    page: Number(pagePart) || 1,
+    analysis: { chapters: [{ title: `章节 ${learningId}` }], keyQuotes: [] },
+    updatedAt: 1000,
+    ...overrides,
+  };
+}
+
+test("概览仓储以 learningId 为主键存取", async () => {
+  const repository = STORE.createLearningRepository({
+    driver: IDB.createMemoryDriver(),
+  });
+
+  await repository.save(learningRecord("BV1xx411c7mD:p1"));
+  await repository.save(learningRecord("BV1xx411c7mD:p2"));
+
+  assert.equal((await repository.all()).length, 2);
+  const found = await repository.find("BV1xx411c7mD:p2");
+  assert.equal(found.analysis.chapters[0].title, "章节 BV1xx411c7mD:p2");
+  assert.equal(await repository.find("missing:p1"), null);
+  await assert.rejects(() => repository.save({ noId: true }), /learningId/);
+});
+
+test("迁移把散存的概览搬进 IndexedDB，成功后才删旧 key 并记标记", async () => {
+  const storage = memoryStorage({
+    [STORE.learningKey("BV1xx411c7mD", 1)]: learningRecord("BV1xx411c7mD:p1"),
+    [STORE.learningKey("BV1xx411c7mD", 2)]: learningRecord("BV1xx411c7mD:p2"),
+  });
+  const repository = STORE.createLearningRepository({
+    driver: IDB.createMemoryDriver(),
+  });
+
+  const result = await STORE.ensureLearningInIdb({ storage, repository, now: 5000 });
+
+  assert.equal(result.migrated, true);
+  assert.equal(result.count, 2);
+  assert.equal((await repository.all()).length, 2);
+  assert.equal(storage.data[STORE.learningKey("BV1xx411c7mD", 1)], undefined);
+  assert.equal(storage.data[STORE.META_KEY].learningIdb, true);
+});
+
+test("概览迁移幂等且跳过坏记录", async () => {
+  const storage = memoryStorage({
+    [STORE.learningKey("BV1xx411c7mD", 1)]: { broken: true },
+    [STORE.learningKey("BV1xx411c7mD", 3)]: learningRecord("BV1xx411c7mD:p3"),
+  });
+  const repository = STORE.createLearningRepository({
+    driver: IDB.createMemoryDriver(),
+  });
+
+  const first = await STORE.ensureLearningInIdb({ storage, repository });
+  assert.equal(first.migrated, true);
+  assert.equal(first.count, 1);
+
+  storage.data[STORE.learningKey("BV1xx411c7mD", 9)] = learningRecord(
+    "BV1xx411c7mD:p9",
+  );
+  const second = await STORE.ensureLearningInIdb({ storage, repository });
+  assert.equal(second.migrated, false);
+  assert.equal((await repository.all()).length, 1, "不复活标记设置后的旧数据");
 });
