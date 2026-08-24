@@ -1547,8 +1547,13 @@ function hideQaHint() {
  */
 function appendAnswerText(node, answer, clickableSeconds) {
   const clickable = new Set(clickableSeconds || []);
+  // 渲染时再兜一次：修复前入库的历史回答可能带着成对引号。
+  const clean = String(answer || "")
+    .trim()
+    .replace(/^[“"']+\s*/, "")
+    .replace(/[”"']+\s*$/, "");
   node.textContent = "";
-  for (const segment of BILI_QA_CITATIONS.splitAnswerByTimestamps(answer)) {
+  for (const segment of BILI_QA_CITATIONS.splitAnswerByTimestamps(clean)) {
     if (segment.seconds == null) {
       node.append(segment.text);
     } else if (clickable.has(segment.seconds)) {
@@ -1619,7 +1624,7 @@ function renderQaCard(entry) {
   appendAnswerText(answer, entry.answer, entry.clickable);
 
   const citations = document.createElement("details");
-  citations.className = "note-source qa-citations";
+  citations.className = "qa-citations";
   // 折叠形态：内联时间戳已可点击，依据原句留给想核对的人展开看。
   const citationsSummary = document.createElement("summary");
   citationsSummary.className = "qa-citations-summary";

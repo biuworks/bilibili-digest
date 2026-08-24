@@ -1606,7 +1606,7 @@ test("提问后立即进入进行态：清输入、上占位卡，完成后替�
     bvid: "BV1xx411c7mD",
     page: 1,
     question: "这个视频的结论是什么？",
-    answer: "结论在 [0:05]。",
+    answer: "“结论在 [0:05]。”",
     citations: [{ startSeconds: 5, quote: "字幕原句" }],
     clickable: [5],
     createdAt: Date.now(),
@@ -1648,6 +1648,11 @@ test("提问后立即进入进行态：清输入、上占位卡，完成后替�
     (child) => child.className === "qa-question",
   );
   assert.match(questionNode.textContent, /结论是什么/);
+  // 渲染层剥离成对引号：历史旧数据也能正常显示。
+  const answerNode = cards[0].children.find(
+    (child) => child.className === "entry-text",
+  );
+  assert.equal(answerNode.textContent.includes("“"), false);
 });
 
 test("问答失败时恢复输入并移除占位卡", async () => {
@@ -1705,7 +1710,7 @@ test("问答卡片只有复制操作，且有成功反馈", async () => {
 
   // 引用区折叠为一行摘要，展开才能看到原句。
   const citationsNode = card.children.find(
-    (child) => child.className === "note-source qa-citations",
+    (child) => child.className === "qa-citations",
   );
   assert.equal(citationsNode.tagName, "details");
   assert.equal(citationsNode.children[0].textContent, "字幕依据 · 1 条");

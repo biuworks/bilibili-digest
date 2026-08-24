@@ -1094,6 +1094,7 @@ button {
 
 .qa-citations {
   display: block;
+  margin: 8px 0 0;
 }
 
 .qa-citations-summary {
