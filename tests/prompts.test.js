@@ -7,7 +7,8 @@ const AI = require("../lib/ai.js");
 
 const root = path.resolve(__dirname, "..");
 const read = (file) => fs.readFileSync(path.join(root, "prompts", file), "utf8");
-const backgroundSource = fs.readFileSync(path.join(root, "background.js"), "utf8");
+const readText = (file) => fs.readFileSync(path.join(root, file), "utf8");
+const backgroundSource = readText("background.js");
 
 /**
  * background.js 里传的变量名与提示词文件里写的占位符必须一一对应。
@@ -123,14 +124,25 @@ test("分批/分块任务的系统提示词保持稳定前缀，服务商缓存�
   );
 });
 
-test("background.js 引用的提示词文件与小节名都存在", () => {
-  const calls = [
-    ...backgroundSource.matchAll(/loadPromptSection\(\s*"([^"]+)",\s*"([^"]+)"/g),
-  ].map((match) => ({ file: match[1], heading: match[2] }));
+test("运行时代码引用的提示词文件与小节名都存在", () => {
+  // 提示词调用点随模块拆分散进 lib/，逐个运行时文件扫描而不是只盯 background。
+  const sources = [
+    "background.js",
+    ...fs
+      .readdirSync(path.join(root, "lib"))
+      .filter((name) => name.endsWith(".js"))
+      .map((name) => `lib/${name}`),
+  ].map(readText);
+
+  const calls = sources.flatMap((source) =>
+    [...source.matchAll(/loadPromptSection\(\s*"([^"]+)",\s*"([^"]+)"/g)].map(
+      (match) => ({ file: match[1], heading: match[2] }),
+    ),
+  );
 
   assert.ok(calls.length >= 6, "应当至少有概览、解释、笔记三组提示词调用");
   for (const { file, heading } of calls) {
-    assert.ok(PROMPTS[file], `background.js 引用了未知的提示词文件：${file}`);
+    assert.ok(PROMPTS[file], `运行时代码引用了未知的提示词文件：${file}`);
     // 小节缺失时 extractPromptSection 会抛错，这里就是要它别抛。
     AI.extractPromptSection(read(file), heading, PROMPTS[file]);
   }

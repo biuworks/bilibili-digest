@@ -20,6 +20,7 @@ importScripts(
   "lib/cache.js",
   "lib/note-db.js",
   "lib/ai-transport.js",
+  "lib/notes-service.js",
 );
 
 const DEBUG = false;
@@ -53,6 +54,21 @@ function aiTaskKey(message) {
   const page = Number(message.page) > 0 ? Math.floor(Number(message.page)) : 1;
   return `${message.kind}:${message.bvid || ""}:p${page}`;
 }
+
+// 笔记业务（保存去重、后台润色、AI 候选、备份）在 lib/notes-service.js。
+const notesService = BILI_NOTES_SERVICE.createNotesService({
+  repositories: { notes: notesRepository, learning: learningRepository },
+  dataReady: learningDataReady,
+  ensureTranscript,
+  loadPromptSection,
+  requestAiCompletion,
+  settingsValid: async () => BILI_SETTINGS.validate(await getSettings()).ok,
+  broadcast: (message) => {
+    chrome.runtime.sendMessage(message).catch(() => {});
+  },
+  onTaskProgress: (taskId, patch) => aiTasks.progress(taskId, patch),
+  logWarn: (...args) => console.warn(...args),
+});
 
 function startAiTask(message) {
   if (!message.taskId || !AI_TASK_KINDS.has(message.kind)) {
@@ -383,40 +399,45 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.action === "saveNote") {
-    handleSaveNote(message)
+    notesService
+      .saveNote(message)
       .then(sendResponse)
-      .catch((error) => sendResponse(noteWriteErrorResponse(error)));
+      .catch((error) => sendResponse(notesService.noteWriteErrorResponse(error)));
     return true;
   }
 
   if (message?.action === "getNotes") {
-    handleGetNotes(message.bvid, message.page)
+    notesService
+      .getNotes(message.bvid, message.page)
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
 
   if (message?.action === "deleteNote") {
-    handleDeleteNote(message.noteId)
+    notesService
+      .deleteNote(message.noteId)
       .then(sendResponse)
-      .catch((error) => sendResponse(noteWriteErrorResponse(error)));
+      .catch((error) => sendResponse(notesService.noteWriteErrorResponse(error)));
     return true;
   }
 
   if (message?.action === "updateNote") {
-    handleUpdateNote(message.noteId, message.text)
+    notesService
+      .updateNote(message.noteId, message.text)
       .then(sendResponse)
-      .catch((error) => sendResponse(noteWriteErrorResponse(error)));
+      .catch((error) => sendResponse(notesService.noteWriteErrorResponse(error)));
     return true;
   }
 
   if (message?.action === "generateNoteDraft") {
     runManagedAiOperation(
       message.taskId,
-      (signal) => handleGenerateNoteDraft(message.noteId, {
-        signal,
-        taskId: message.taskId,
-      }),
+      (signal) =>
+        notesService.generateNoteDraft(message.noteId, {
+          signal,
+          taskId: message.taskId,
+        }),
       { autoFinish: true },
     )
       .then(sendResponse)
@@ -425,13 +446,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.action === "resolveNoteDraft") {
-    handleResolveNoteDraft(
-      message.noteId,
-      message.mode,
-      message.expectedRevision,
-    )
+    notesService
+      .resolveNoteDraft(message.noteId, message.mode, message.expectedRevision)
       .then(sendResponse)
-      .catch((error) => sendResponse(noteWriteErrorResponse(error)));
+      .catch((error) => sendResponse(notesService.noteWriteErrorResponse(error)));
     return true;
   }
 
@@ -444,14 +462,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message?.action === "exportLearningBackup") {
-    handleExportLearningBackup()
+    notesService
+      .exportLearningBackup()
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
 
   if (message?.action === "importLearningBackup") {
-    handleImportLearningBackup(message.backup)
+    notesService
+      .importLearningBackup(message.backup)
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
@@ -1189,491 +1209,6 @@ async function handleExplainSelection(selectedText, transcriptContext, videoTitl
     console.error("[Bilibili Digest] 划词解释失败：", error);
     return aiErrorResponse(error);
   }
-}
-
-// ============================================================
-// 笔记
-// ============================================================
-
-// 笔记的「读—改—写」也要串行：润色是保存后异步落笔的，会和新增 / 删除并发。
-const notesWriteQueue = BILI_CONCURRENCY.createSerialQueue();
-
-function noteWriteErrorResponse(error) {
-  const detail = String(error?.message || error || "");
-  if (/quota|exceed|storage.+full|空间不足/i.test(detail)) {
-    return {
-      success: false,
-      error: "STORAGE_FULL",
-      message: "浏览器本地存储空间不足，已有笔记没有被删除。",
-    };
-  }
-  return {
-    success: false,
-    error: "NOTE_WRITE_FAILED",
-    message: detail || "笔记保存失败，请重试。",
-  };
-}
-
-/**
- * 笔记的「读—改—写」在 IndexedDB 上仍要走串行队列：润色是保存后异步落笔的，
- * 会和新增 / 删除并发，IndexedDB 的事务只保证单次 write 原子，管不了
- * 跨 await 的读改写竞态。
- *
- * 提交按引用相等做增量 diff：mutator 必须原样返回未改动项的同一引用
- * （现有各处都是 spread 出新对象表示「改了」），这样一次编辑只重写真正
- * 变化的那几条，而不是把整库 put 一遍。
- */
-function mutateNotes(mutate) {
-  return notesWriteQueue(async () => {
-    await learningDataReady();
-    const repository = notesRepository();
-    const current = await repository.all();
-    // 交给 mutator 的是副本：有的调用方会原地改数组（比如 unshift 新笔记），
-    // 不能让它污染用来做对照的快照。数组里装的是引用，复制本身不贵。
-    const next = mutate([...current]);
-    if (!Array.isArray(next)) {
-      throw new Error("笔记变更加工没有返回列表");
-    }
-
-    const nextIds = new Set(next.filter((note) => note?.id).map((note) => note.id));
-    const remove = current
-      .filter((note) => !nextIds.has(note.id))
-      .map((note) => note.id);
-    const currentById = new Map(current.map((note) => [note.id, note]));
-    const put = next.filter(
-      (note) => note?.id && currentById.get(note.id) !== note,
-    );
-    if (put.length || remove.length) {
-      await repository.commit({ put, remove });
-    }
-    return next;
-  });
-}
-
-// 请模型把口语字幕整理成通顺的笔记。失败返回 null，笔记保持原始字幕。
-async function polishNoteText(context, videoTitle) {
-  try {
-    const variables = {
-      videoTitle: videoTitle || "未知",
-      fullContext: context.fullContext,
-      beforeText: context.beforeText || "（无）",
-      targetText: context.targetText,
-      afterText: context.afterText || "（无）",
-    };
-    const [systemPrompt, userPrompt] = await Promise.all([
-      loadPromptSection("note-cleanup.md", "系统提示词", variables),
-      loadPromptSection("note-cleanup.md", "用户提示词", variables),
-    ]);
-
-    const { text } = await requestAiCompletion({
-      maxTokens: 512,
-      responseFormat: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: userPrompt },
-      ],
-    });
-
-    const parsed = BILI_AI.parseLooseJson(text);
-    if (typeof parsed?.quote === "string" && parsed.quote.trim()) {
-      return parsed.quote.trim().slice(0, 3000);
-    }
-    return null;
-  } catch (error) {
-    // 润色失败不该让笔记丢掉，原始文本已经在库里了。
-    console.warn("[Bilibili Digest] 笔记润色失败，保留原始字幕：", error.message);
-    return null;
-  }
-}
-
-// 用户主动优化时以当前正文为唯一输入：手动写下的观点不能被原始字幕重置。
-async function refineCurrentNoteText(currentText, videoTitle, { signal } = {}) {
-  const variables = {
-    videoTitle: videoTitle || "未知",
-    currentText,
-  };
-  const [systemPrompt, userPrompt] = await Promise.all([
-    loadPromptSection("note-refine.md", "系统提示词", variables),
-    loadPromptSection("note-refine.md", "用户提示词", variables),
-  ]);
-  const { text } = await requestAiCompletion({
-    maxTokens: BILI_AI.estimateOutputTokens(currentText.length, {
-      ratio: 1.2,
-      floor: 512,
-      ceiling: 4096,
-    }),
-    responseFormat: { type: "json_object" },
-    signal,
-    messages: [
-      { role: "system", content: systemPrompt },
-      { role: "user", content: userPrompt },
-    ],
-  });
-  const parsed = BILI_AI.parseLooseJson(text);
-  const refined = typeof parsed?.quote === "string" ? parsed.quote.trim() : "";
-  if (!refined) {
-    const error = new Error("模型没有返回有效的笔记正文，请重试。");
-    error.code = "EMPTY_AI_RESPONSE";
-    throw error;
-  }
-  return refined.slice(0, 3000);
-}
-
-// 后台润色完成后把正文换掉。笔记可能已被删除，map 不命中就什么都不做。
-async function polishNoteWhenReady(noteId, context, videoTitle) {
-  const polished = await polishNoteText(context, videoTitle);
-  await mutateNotes((notes) =>
-    notes.map((note) => {
-      if (note.id !== noteId || !note.pending) return note;
-      const changed = Boolean(polished && polished !== note.text);
-      return {
-        ...note,
-        text: polished || note.text,
-        pending: false,
-        updatedAt: changed ? Date.now() : note.updatedAt,
-        revision:
-          Math.max(1, Number(note.revision) || 1) + (changed ? 1 : 0),
-        contentSource: changed ? "ai" : note.contentSource,
-      };
-    }),
-  );
-  chrome.runtime.sendMessage({ action: "noteUpdated", noteId }).catch(() => {});
-}
-
-async function handleSaveNote({ bvid: bvidInput, page = 1, timestamp, text: manualText }) {
-  const bvid = BILI_API.parseBvid(bvidInput);
-  if (!bvid) {
-    return { success: false, error: "INVALID_BVID", message: "没有识别到 BV 号。" };
-  }
-  const pageNumber = Number(page) > 0 ? Math.floor(Number(page)) : 1;
-  const seconds = Math.max(0, Math.floor(Number(timestamp) || 0));
-
-  const transcript = await ensureTranscript(bvid, pageNumber);
-  if (!transcript.success) return transcript;
-
-  const videoTitle = transcript.videoInfo?.title || "";
-  // 概览里的「存为笔记」已经有整理好的文字，不必再过一次模型。
-  let noteText = String(manualText || "").trim();
-  let rawText = noteText;
-  let polishContext = null;
-
-  if (!noteText) {
-    const context = BILI_AI.noteContextAt(transcript.transcript, seconds);
-    if (!context) {
-      return { success: false, error: "NO_TRANSCRIPT", message: "没有可用的字幕。" };
-    }
-    rawText = context.targetText;
-    // 先用原始字幕落库，保存立即完成；润色在后台跑完再替换正文。
-    noteText = [context.beforeText, context.targetText, context.afterText]
-      .filter(Boolean)
-      .join(" ");
-    // 本地推理服务往往不需要密钥，所以用完整校验而不是只看密钥有没有填。
-    const settings = await getSettings();
-    if (BILI_SETTINGS.validate(settings).ok) polishContext = context;
-  }
-
-  const note = {
-    id: `note_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-    bvid,
-    page: pageNumber,
-    videoTitle: videoTitle.slice(0, 500),
-    ownerName: (transcript.videoInfo?.owner || "").slice(0, 300),
-    timestamp: BILI_TRANSCRIPT.formatTimestamp(seconds),
-    timestampSeconds: seconds,
-    timestampedUrl: BILI_API.canonicalVideoUrl(bvid, seconds, pageNumber),
-    text: noteText,
-    rawText,
-    // 界面靠它显示「润色中」；配合 createdAt 识别润色中途挂掉留下的僵尸标记
-    pending: Boolean(polishContext),
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    learningId: BILI_LEARNING_STORE.learningId(bvid, pageNumber),
-    revision: 1,
-    contentSource: manualText ? "ai" : "raw",
-  };
-
-  // 同一时刻只该有一条笔记：金句重复点「存为笔记」、或同一秒连按 n，都会攒出
-  // 内容重复的笔记。去重放在串行队列里做，双击并发时也不会两边都插进去。
-  let existing = null;
-  await mutateNotes((notes) => {
-    existing =
-      notes.find(
-        (item) =>
-          item.bvid === bvid &&
-          Number(item.page || 1) === pageNumber &&
-          item.timestampSeconds === seconds,
-      ) || null;
-    if (existing) return notes;
-    notes.unshift(note);
-    return notes;
-  });
-
-  if (existing) {
-    // 对调用方而言「已存在」也是成功：按钮照常显示「已保存」，不再广播刷新。
-    return { success: true, duplicate: true, note: existing };
-  }
-
-  // 侧边栏可能开着笔记页，通知它刷新。
-  chrome.runtime.sendMessage({ action: "noteSaved", note }).catch(() => {});
-
-  // 故意不 await：让播放页的按钮立刻得到「已保存」。
-  if (polishContext) polishNoteWhenReady(note.id, polishContext, videoTitle);
-
-  // 兼容升级前已经生成、但只存在短期缓存中的概览。
-  if (transcript.analysis) {
-    BILI_LEARNING_STORE.saveLearningRecord(
-      {
-        bvid,
-        page: pageNumber,
-        videoTitle,
-        ownerName: transcript.videoInfo?.owner || "",
-        analysis: transcript.analysis,
-      },
-      { repository: learningRepository() },
-    ).catch((error) =>
-      console.warn("[Bilibili Digest] 概览长期保存失败：", error),
-    );
-  }
-
-  return { success: true, note };
-}
-
-async function handleGetNotes(bvidInput, page) {
-  await learningDataReady();
-  const notes = await notesRepository().all();
-  const bvid = bvidInput ? BILI_API.parseBvid(bvidInput) : null;
-  const pageNumber = Number(page) > 0 ? Math.floor(Number(page)) : null;
-  return {
-    success: true,
-    notes: bvid
-      ? notes.filter(
-          (note) =>
-            note.bvid === bvid &&
-            (!pageNumber || Number(note.page || 1) === pageNumber),
-        )
-      : notes,
-    totalCount: notes.length,
-  };
-}
-
-async function handleExportLearningBackup() {
-  await learningDataReady();
-  const [notes, learning] = await Promise.all([
-    notesRepository().all(),
-    learningRepository().all(),
-  ]);
-  return {
-    success: true,
-    backup: BILI_LEARNING_STORE.buildBackup({ notes, learning }),
-  };
-}
-
-async function handleImportLearningBackup(payload) {
-  await learningDataReady();
-  const parsed = BILI_LEARNING_STORE.parseBackup(payload);
-  if (!parsed.ok) return { success: false, error: parsed.error, message: parsed.message };
-  const [notes, learning] = await Promise.all([
-    notesRepository().all(),
-    learningRepository().all(),
-  ]);
-  const merged = BILI_LEARNING_STORE.mergeBackup(notes, learning, parsed.backup);
-  // 笔记与概览各自单事务写入 IndexedDB。中途失败重跑导入即可：
-  // 合并按 updatedAt 取新，天然幂等。
-  if (merged.learning.length) {
-    await learningRepository().commit({ put: merged.learning });
-  }
-  await notesRepository().commit({ put: merged.notes });
-  chrome.runtime.sendMessage({ action: "notesImported" }).catch(() => {});
-  return {
-    success: true,
-    notesAdded: merged.notesAdded,
-    notesUpdated: merged.notesUpdated,
-    learningAdded: merged.learningAdded,
-    learningUpdated: merged.learningUpdated,
-  };
-}
-
-async function handleDeleteNote(noteId) {
-  await mutateNotes((notes) => notes.filter((note) => note.id !== noteId));
-  return { success: true };
-}
-
-async function handleUpdateNote(noteId, input) {
-  const text = String(input || "").trim();
-  if (!text) {
-    return {
-      success: false,
-      error: "EMPTY_NOTE",
-      message: "笔记正文不能为空。",
-    };
-  }
-  if (text.length > 3000) {
-    return {
-      success: false,
-      error: "NOTE_TOO_LONG",
-      message: "笔记正文不能超过 3000 个字符。",
-    };
-  }
-
-  let updated = null;
-  await mutateNotes((notes) =>
-    notes.map((note) => {
-      if (note.id !== noteId) return note;
-      const { aiDraft, ...current } = note;
-      updated = {
-        ...current,
-        text,
-        pending: false,
-        updatedAt: Date.now(),
-        revision: Math.max(1, Number(note.revision) || 1) + 1,
-        contentSource: "user",
-      };
-      return updated;
-    }),
-  );
-  if (!updated) {
-    return {
-      success: false,
-      error: "NOTE_NOT_FOUND",
-      message: "这条笔记已经不存在了。",
-    };
-  }
-
-  chrome.runtime.sendMessage({ action: "noteUpdated", noteId }).catch(() => {});
-  return { success: true, note: updated };
-}
-
-async function handleGenerateNoteDraft(noteId, { signal, taskId } = {}) {
-  if (taskId) {
-    aiTasks.progress(taskId, {
-      phase: "generating",
-      message: "正在生成优化建议…",
-    });
-  }
-  await learningDataReady();
-  const notes = await notesRepository().all();
-  const snapshot = notes.find((note) => note.id === noteId);
-  if (!snapshot) {
-    return {
-      success: false,
-      error: "NOTE_NOT_FOUND",
-      message: "这条笔记已经不存在了。",
-    };
-  }
-
-  const currentText = String(snapshot.text || "").trim();
-  if (!currentText) {
-    return {
-      success: false,
-      error: "EMPTY_NOTE",
-      message: "笔记正文为空，先写下内容再使用 AI 优化。",
-    };
-  }
-  const basedOnRevision = Math.max(1, Number(snapshot.revision) || 1);
-  const draftText = await refineCurrentNoteText(currentText, snapshot.videoTitle, { signal });
-  throwIfTaskCanceled(signal);
-  let updated = null;
-  await mutateNotes((currentNotes) =>
-    currentNotes.map((note) => {
-      if (note.id !== noteId) return note;
-      const currentRevision = Math.max(1, Number(note.revision) || 1);
-      updated = {
-        ...note,
-        aiDraft: {
-          text: draftText,
-          basedOnRevision,
-          createdAt: Date.now(),
-          conflict: currentRevision !== basedOnRevision,
-        },
-      };
-      return updated;
-    }),
-  );
-  if (!updated) {
-    return {
-      success: false,
-      error: "NOTE_NOT_FOUND",
-      message: "生成期间这条笔记已被删除。",
-    };
-  }
-
-  chrome.runtime.sendMessage({ action: "noteUpdated", noteId }).catch(() => {});
-  return { success: true, note: updated };
-}
-
-async function handleResolveNoteDraft(noteId, mode, expectedRevision) {
-  if (!["replace", "append", "discard"].includes(mode)) {
-    return {
-      success: false,
-      error: "INVALID_DRAFT_ACTION",
-      message: "不支持这个候选处理方式。",
-    };
-  }
-
-  let updated = null;
-  let failure = null;
-  await mutateNotes((notes) =>
-    notes.map((note) => {
-      if (note.id !== noteId) return note;
-      const revision = Math.max(1, Number(note.revision) || 1);
-      if (!note.aiDraft?.text) {
-        failure = {
-          success: false,
-          error: "NOTE_DRAFT_NOT_FOUND",
-          message: "AI 候选已经不存在了，请重新生成。",
-        };
-        return note;
-      }
-      if (mode === "discard") {
-        const { aiDraft, ...current } = note;
-        updated = current;
-        return updated;
-      }
-      if (revision !== Number(expectedRevision)) {
-        failure = {
-          success: false,
-          error: "NOTE_CONFLICT",
-          message: "笔记内容已经发生变化，请确认最新内容后再操作。",
-          note,
-        };
-        return note;
-      }
-
-      const { aiDraft, ...current } = note;
-      const text =
-        mode === "append"
-          ? `${String(note.text || "").trim()}\n\n${aiDraft.text}`.trim()
-          : aiDraft.text;
-      if (text.length > 3000) {
-        failure = {
-          success: false,
-          error: "NOTE_TOO_LONG",
-          message: "追加后超过 3000 个字符，请先精简当前笔记。",
-        };
-        return note;
-      }
-      updated = {
-        ...current,
-        text,
-        pending: false,
-        updatedAt: Date.now(),
-        revision: revision + 1,
-        contentSource: mode === "replace" ? "ai" : "user",
-      };
-      return updated;
-    }),
-  );
-  if (failure) return failure;
-  if (!updated) {
-    return {
-      success: false,
-      error: "NOTE_NOT_FOUND",
-      message: "这条笔记已经不存在了。",
-    };
-  }
-
-  chrome.runtime.sendMessage({ action: "noteUpdated", noteId }).catch(() => {});
-  return { success: true, note: updated };
 }
 
 // 开新标签页前先问一句视频还在不在，免得用户等页面加载完才看到「稿件不可见」。
