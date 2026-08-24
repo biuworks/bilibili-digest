@@ -8,7 +8,11 @@
  *   npx playwright install chromium
  *   node scripts/capture-sidepanel.js
  *
- * 输出：imgs/transcript.png、overview.png、explain.png、notes.png、notes-refine.png
+ * 输出 README 用的竖版原图。商店合成图最多 6 张（Chrome 5 / Edge 6），
+ * 由 scripts/make-store-screenshots.py 从这里挑选，不要直接往商店目录加第 7 张。
+ *
+ * 输出：imgs/transcript.png、overview.png、explain.png、notes.png、notes-refine.png、
+ *       notes-search.png、learning-export.png
  */
 "use strict";
 
@@ -167,6 +171,48 @@ const NOTES = [
   },
 ];
 
+// 「全部」范围和笔记搜索只有跨视频才看得出意义：同一个 UP 主下有几条、
+// 别的 UP 主该被滤掉。这些笔记不属于当前视频，桩会按 bvid 把它们挡在
+// 「本视频」之外，所以前几张截图的内容不受影响。
+const OTHER_NOTES = [
+  {
+    id: "note_4",
+    bvid: "BV1cs4y1B7Xk",
+    page: 1,
+    timestamp: "3:12",
+    timestampSeconds: 192,
+    timestampedUrl: "https://www.bilibili.com/video/BV1cs4y1B7Xk?t=192",
+    text: "复述要说给人听。说不顺，就是还没真懂。",
+    videoTitle: "为什么看过的视频记不住",
+    ownerName: "学习方法实验室",
+    createdAt: 4,
+  },
+  {
+    id: "note_5",
+    bvid: "BV1Qq4y1H7Zt",
+    page: 1,
+    timestamp: "5:40",
+    timestampSeconds: 340,
+    timestampedUrl: "https://www.bilibili.com/video/BV1Qq4y1H7Zt?t=340",
+    text: "先把问题列出来再看视频，注意力会自己收敛到答案上。",
+    videoTitle: "带着问题看视频",
+    ownerName: "学习方法实验室",
+    createdAt: 5,
+  },
+  {
+    id: "note_6",
+    bvid: "BV1xy4y1K7Qd",
+    page: 1,
+    timestamp: "0:55",
+    timestampSeconds: 55,
+    timestampedUrl: "https://www.bilibili.com/video/BV1xy4y1K7Qd?t=55",
+    text: "工作记忆一次只放得下三四块，超了就必须先写下来。",
+    videoTitle: "工作记忆的容量",
+    ownerName: "认知实验室",
+    createdAt: 6,
+  },
+];
+
 const FIXTURE = {
   bvid: BVID,
   url: `https://www.bilibili.com/video/${BVID}`,
@@ -185,7 +231,7 @@ const FIXTURE = {
     translated: TRANSLATED,
     analysis: ANALYSIS,
   },
-  notes: NOTES,
+  notes: [...NOTES, ...OTHER_NOTES],
 };
 
 const SHOTS = [
@@ -194,6 +240,8 @@ const SHOTS = [
   "explain.png",
   "notes.png",
   "notes-refine.png",
+  "notes-search.png",
+  "learning-export.png",
 ];
 const LEGACY_SHOTS = ["字幕.png", "概览.png", "解释.png", "笔记.png"];
 
@@ -357,7 +405,13 @@ async function main() {
         getURL: (file) => file,
         async sendMessage(message) {
           if (message?.action === "fetchTranscript") return fixture.transcript;
-          if (message?.action === "getNotes") return { success: true, notes: fixture.notes };
+          if (message?.action === "getNotes") {
+            // 与 background 一致：带 bvid 是「本视频」，不带是「全部」。
+            const notes = message.bvid
+              ? fixture.notes.filter((note) => note.bvid === message.bvid)
+              : fixture.notes;
+            return { success: true, notes };
+          }
           if (message?.action === "checkVideoAvailable") return { available: true };
           if (message?.action === "explainSelection") {
             return {
@@ -371,7 +425,10 @@ async function main() {
         onMessage: empty,
         openOptionsPage() {},
       },
-      storage: { local: { get: async () => ({}) } },
+      storage: {
+        local: { get: async () => ({}) },
+        onChanged: empty,
+      },
     };
   }, FIXTURE);
 
@@ -450,6 +507,36 @@ async function main() {
   await page.waitForSelector(".note-ai-draft:not([hidden]) .note-ai-draft-text");
   await fitPanel(page);
   await shot(page, "notes-refine.png");
+
+  // 按 UP 主搜「全部」：命中跨了三个视频，另一个 UP 主的那条被滤掉，
+  // 计数上的 5/6 正好说明这是在全部笔记里筛，而不是只看当前视频。
+  await page.click("#notesScopeAll");
+  await page.waitForFunction(
+    () => document.querySelectorAll("#notesList .note").length === 6,
+  );
+  await page.fill("#notesSearchInput", "学习方法实验室");
+  await page.waitForFunction(
+    () => document.getElementById("notesSearchCount").textContent.includes("条匹配"),
+  );
+  await setDraftsVisible(page, false);
+  await freezePlayback(page);
+  await fitPanel(page);
+  await shot(page, "notes-search.png");
+
+  // 导出菜单里的「学习稿」只在「本视频」下出现，先切回去再展开。
+  await page.fill("#notesSearchInput", "");
+  await page.click("#notesScopeVideo");
+  await page.waitForFunction(
+    () => document.querySelectorAll("#notesList .note").length === 3,
+  );
+  await setDraftsVisible(page, false);
+  await freezePlayback(page);
+  await fitPanel(page);
+  await page.evaluate(() => {
+    document.getElementById("notesExportMenu").open = true;
+  });
+  await page.waitForTimeout(120);
+  await shot(page, "learning-export.png");
 
   await browser.close();
   server.close();

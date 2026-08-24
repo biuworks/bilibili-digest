@@ -62,6 +62,10 @@ AI 通读字幕，产出带时间戳的章节，金句按时间挂在所属章�
 
 <img src="imgs/notes-refine.png" width="440" alt="笔记 AI 优化建议">
 
+<img src="imgs/notes-search.png" width="440" alt="按 UP 主检索全部笔记">
+
+<img src="imgs/learning-export.png" width="440" alt="导出完整学习稿">
+
 ## 本地加载
 
 商店安装见顶部 [安装](#store-install)。

@@ -26,17 +26,27 @@ dist/digest-for-bilibili-0.3.0.zip
 
 Chrome 开发者后台与 Edge 合作伙伴中心都上传这一份。ZIP 顶层必须是 `manifest.json`。
 
-### 商店截图（1280×800，按这个顺序替换）
+### 商店截图（1280×800）
+
+硬上限：Chrome 5 张、Edge 6 张。商店图只维护这 6 张，多一张传不上去。
+
+Chrome 按这个顺序替换：
 
 ```text
 store/screenshots/01-transcript.png
 store/screenshots/02-overview.png
 store/screenshots/03-explain.png
-store/screenshots/04-notes.png
-store/screenshots/05-notes-refine.png
+store/screenshots/04-notes-search.png
+store/screenshots/05-learning-export.png
 ```
 
-Chrome 最多 5 张，这次正好用满。Edge 扩展徽标仍用 `store/logo-300.png`，图标仍用 `icons/icon128.png`。
+Edge 在上面五张之后追加第 6 张：
+
+```text
+store/screenshots/06-notes-refine.png
+```
+
+Edge 扩展徽标仍用 `store/logo-300.png`，图标仍用 `icons/icon128.png`。
 
 ### 后台里要改 / 不用改
 
@@ -44,29 +54,28 @@ Chrome 最多 5 张，这次正好用满。Edge 扩展徽标仍用 `store/logo-3
 | --- | --- |
 | 安装包 | 上传上面的 zip |
 | 详细说明 | 整段替换为下面「详细说明」 |
-| 截图 | 五张全部换成新图 |
+| 截图 | Chrome 换前五张；Edge 六张全部替换 |
 | 名称、简短说明、类别、单一用途 | 不用改 |
 | 权限理由 | 不用改（权限集合没变） |
 | 数据披露 | 不用改（仍是 API 密钥 + 网站内容） |
 | 隐私政策 URL | 不用改，但确认 GitHub 上已是最新 `PRIVACY.md` |
 | 远程代码 | 仍选「否」 |
-| 认证说明 | **每次提交都要换一把临时密钥**，按文末模板填 |
+| 认证说明 | 不用填。前几个版本都未向审核员提供临时密钥，本次同样不提供 |
 
 ### Chrome 应用商店
 
 1. 打开 [Chrome 开发者后台](https://chrome.google.com/webstore/devconsole) → Digest for Bilibili → 套件。
 2. 上传 `dist/digest-for-bilibili-0.3.0.zip`。
-3. 商店资讯：贴「详细说明」，截图按 01–05 顺序替换。
+3. 商店资讯：贴「详细说明」，截图按 01–05 顺序替换（Chrome 最多五张）。
 4. 隐私：核对披露与远程代码选项未被动过。
-5. 填认证说明（临时密钥 + 一条免登录就能出字幕的 BV）。
-6. 提交审核。可选「审核通过后再发布」，两边进度容易对齐。
+5. 提交审核。可选「审核通过后再发布」，两边进度容易对齐。认证说明栏留空。
 
 ### Microsoft Edge 加载项
 
 1. 打开 [Edge 合作伙伴中心](https://partner.microsoft.com/dashboard) → Digest for Bilibili。
 2. 上传**同一份** zip。
-3. 产品详情里替换详细说明和五张截图；300×300 徽标不用动。
-4. 隐私与认证说明与 Chrome 相同。
+3. 产品详情里替换详细说明；截图按 01–06 顺序替换（前五张与 Chrome 相同，第 6 张为笔记二次优化）；300×300 徽标不用动。
+4. 隐私披露与 Chrome 相同。认证说明栏留空。
 5. 提交审核。
 
 ### 给审核员的变更摘要（可选，有「版本说明」栏再贴）
@@ -82,7 +91,7 @@ Chrome 最多 5 张，这次正好用满。Edge 扩展徽标仍用 `store/logo-3
 - 章节概览中生成失败的分块可单独补生成，不必整份重来
 - 设置页新增界面字号，可在 80% 至 160% 之间自定义
 
-权限、主机范围和数据类别与 0.2.0 相同。验证步骤见认证说明。
+权限、主机范围和数据类别与 0.2.0 相同。
 ```
 
 **不要在说明里罗列模型服务商的名字。** 0.1.0 首次提交时，「使用方法」里列了
@@ -166,10 +175,11 @@ Reads the subtitle track of the Bilibili video the user is currently watching an
 | 字幕截图 | 1280×800 | `store/screenshots/01-transcript.png` |
 | 概览截图 | 1280×800 | `store/screenshots/02-overview.png` |
 | 划词解释截图 | 1280×800 | `store/screenshots/03-explain.png` |
-| 笔记截图 | 1280×800 | `store/screenshots/04-notes.png` |
-| 笔记 AI 优化截图 | 1280×800 | `store/screenshots/05-notes-refine.png` |
+| 笔记搜索截图 | 1280×800 | `store/screenshots/04-notes-search.png` |
+| 学习稿导出截图 | 1280×800 | `store/screenshots/05-learning-export.png` |
+| 笔记 AI 优化截图（Edge 追加） | 1280×800 | `store/screenshots/06-notes-refine.png` |
 
-界面变化后，先跑 `node scripts/capture-sidepanel.js` 重截 `imgs/` 下五张原图，再运行：
+界面变化后，先跑 `node scripts/capture-sidepanel.js` 重截 README 原图，再运行：
 
 ```bash
 python3 scripts/make-store-screenshots.py
@@ -253,21 +263,4 @@ https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
 - [ ] 每项权限理由均已填写。
 - [ ] 数据披露与 `PRIVACY.md` 一致。
 - [ ] 远程代码选择“否”。
-- [ ] 认证说明附带可验证的视频、步骤和临时测试凭据。
-
-## 提交时填的「认证说明」
-
-AI 功能要密钥才跑得起来，不给审核员一把钥匙，多半会以「功能无法验证」被退。
-按下面这个形状填，占位的地方每次提交前换成当次可用的值：
-
-```text
-本扩展不提供模型服务，需要用户自备 API 密钥，因此附上一把测试用的。
-
-1. 安装后会自动打开设置页，服务商选「<预设名>」，密钥填：<临时密钥>
-2. 打开这条带字幕的视频：https://www.bilibili.com/video/<BV 号>
-3. 点工具栏上的扩展图标打开侧边栏，字幕会自动加载（这一步不需要密钥）
-4. 切到「概览」标签点「生成概览」，即可验证需要密钥的 AI 功能
-
-字幕来自 B 站官方接口。部分视频的字幕需要 B 站登录态才可见，上面这条
-无需登录即可取到字幕。测试密钥在审核期间有效，通过后会被吊销。
-```
+- [ ] 认证说明栏留空，不向审核员提供临时密钥。
