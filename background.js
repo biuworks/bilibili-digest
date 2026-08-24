@@ -21,6 +21,7 @@ importScripts(
   "lib/note-db.js",
   "lib/ai-transport.js",
   "lib/notes-service.js",
+  "lib/transcript-service.js",
 );
 
 const DEBUG = false;
@@ -56,6 +57,21 @@ function aiTaskKey(message) {
 }
 
 // 笔记业务（保存去重、后台润色、AI 候选、备份）在 lib/notes-service.js。
+// 字幕管线在 lib/transcript-service.js；缓存读改写助手供概览 / 顺句 / 翻译共用。
+const {
+  fetchTranscript: handleFetchTranscript,
+  ensureTranscript,
+  updateCache,
+  persistable,
+} = BILI_TRANSCRIPT_SERVICE.createTranscriptService({
+  cache: BILI_CACHE,
+  dataReady: learningDataReady,
+  learningRepository,
+  getSettings,
+  logDebug: debugLog,
+  logError: (...args) => console.error(...args),
+});
+
 const notesService = BILI_NOTES_SERVICE.createNotesService({
   repositories: { notes: notesRepository, learning: learningRepository },
   dataReady: learningDataReady,
@@ -481,121 +497,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 });
 
 // ============================================================
-// 字幕管线
-// ============================================================
-
-// 优先命中缓存，未命中走 view → player/wbi/v2 → 字幕 JSON。
-async function handleFetchTranscript(bvidInput, { page = 1, forceRefresh = false } = {}) {
-  const bvid = BILI_API.parseBvid(bvidInput);
-  if (!bvid) {
-    return {
-      success: false,
-      error: "INVALID_BVID",
-      message: "没有识别到 BV 号，请在 B 站播放页使用。",
-    };
-  }
-
-  const pageNumber = Number(page) > 0 ? Math.floor(Number(page)) : 1;
-
-  if (!forceRefresh) {
-    const cached = await BILI_CACHE.load(bvid, { page: pageNumber });
-    if (cached?.transcript?.length) {
-      debugLog("[Bilibili Digest] 命中字幕缓存：", bvid);
-      const restored = await restoreLearningAnalysis(cached, bvid, pageNumber);
-      // 标志放在展开之后：旧版本写进缓存的脏标志不能盖过本次的真实值。
-      return { ...restored, success: true, fromCache: true };
-    }
-  }
-
-  try {
-    const settings = await getSettings();
-    const videoInfo = await BILI_API.fetchVideoInfo(bvid, { page: pageNumber });
-    const { tracks, needLogin } = await BILI_API.fetchSubtitleTracks(videoInfo);
-
-    if (!tracks.length) {
-      return {
-        success: false,
-        error: needLogin ? "NEED_LOGIN" : "NO_SUBTITLE",
-        message: needLogin
-          ? "该视频的字幕需要登录后才能查看，请先在浏览器里登录 B 站账号。"
-          : "该视频没有可用字幕。",
-        videoInfo,
-      };
-    }
-
-    const track = BILI_API.pickSubtitleTrack(
-      tracks,
-      settings.subtitleLangPreference,
-    );
-    const entries = await BILI_API.fetchSubtitleTrackContent(track.url);
-    if (!entries.length) {
-      return {
-        success: false,
-        error: "EMPTY_TRANSCRIPT",
-        message: "字幕文件是空的。",
-        videoInfo,
-      };
-    }
-
-    const segments = BILI_TRANSCRIPT.groupTranscriptEntries(entries);
-    const texts = BILI_TRANSCRIPT.buildTranscriptTexts(entries);
-
-    const result = {
-      videoInfo,
-      transcript: entries,
-      segments,
-      transcriptText: texts.plain,
-      transcriptTextTimestamped: texts.timestamped,
-      language: track.lang,
-      languageLabel: track.langLabel,
-      isAiSubtitle: track.isAi,
-      availableTracks: tracks.map(({ lang, langLabel, isAi }) => ({
-        lang,
-        langLabel,
-        isAi,
-      })),
-    };
-
-    const restored = await restoreLearningAnalysis(result, bvid, pageNumber);
-    await BILI_CACHE.save(bvid, restored, { page: pageNumber });
-    return { ...restored, success: true, fromCache: false };
-  } catch (error) {
-    console.error("[Bilibili Digest] 字幕获取失败：", error);
-    return {
-      success: false,
-      error: error.code || "TRANSCRIPT_FETCH_FAILED",
-      message: error.message || "字幕获取失败。",
-    };
-  }
-}
-
-// 字幕缓存只有 30 天；用户生成过的概览属于学习资料，过期后仍应能与笔记重聚。
-async function restoreLearningAnalysis(payload, bvid, page) {
-  const failuresOf = (record) =>
-    Array.isArray(record?.analysisFailures) ? record.analysisFailures : [];
-
-  if (payload?.analysis) {
-    if (Array.isArray(payload.analysisFailures)) return payload;
-    await learningDataReady();
-    const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, page, {
-      repository: learningRepository(),
-    });
-    return { ...payload, analysisFailures: failuresOf(record) };
-  }
-  await learningDataReady();
-  const record = await BILI_LEARNING_STORE.loadLearningRecord(bvid, page, {
-    repository: learningRepository(),
-  });
-  if (!record?.analysis) return payload;
-  return {
-    ...payload,
-    analysis: record.analysis,
-    analysisFailures: failuresOf(record),
-    analysisSource: "learning",
-  };
-}
-
-// ============================================================
 // 模型调用
 // ============================================================
 
@@ -639,34 +540,6 @@ async function ensureHostPermission(baseUrl) {
 // ============================================================
 // AI 概览
 // ============================================================
-
-/** 概览和笔记都需要字幕，统一从缓存拿，没有再走网络。 */
-async function ensureTranscript(bvid, page) {
-  const cached = await BILI_CACHE.load(bvid, { page });
-  if (cached?.transcript?.length) return { ...cached, success: true };
-  return handleFetchTranscript(bvid, { page });
-}
-
-// 缓存的「读—改—写」必须串行：并发批次会各自读到旧快照，后写的覆盖先写的，
-// 表现为「有些段落莫名其妙没保存下来」，既不报错也难复现。
-const cacheWriteQueue = BILI_CONCURRENCY.createSerialQueue();
-
-function updateCache(bvid, page, mutate) {
-  return cacheWriteQueue(async () => {
-    const current = (await BILI_CACHE.load(bvid, { page })) || {};
-    const next = mutate(current);
-    // 只是更新已有条目，跳过淘汰——淘汰要读全量存储，一次任务几十批经不起这么读。
-    await BILI_CACHE.save(bvid, next, { page, evict: false });
-    return next;
-  });
-}
-
-// success / fromCache 是每次响应现算的，跟着 spread 写进缓存的话，
-// 下次命中时旧标志会盖掉新标志，落库前必须剥掉。
-function persistable(transcript) {
-  const { success, fromCache, ...rest } = transcript;
-  return rest;
-}
 
 // 侧边栏可能没开着，广播失败是正常的。
 function reportProgress(kind, done, total, { taskId, phase, message } = {}) {
