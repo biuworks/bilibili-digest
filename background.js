@@ -23,6 +23,9 @@ importScripts(
   "lib/notes-service.js",
   "lib/transcript-service.js",
   "lib/analysis-service.js",
+  "lib/qa-retrieval.js",
+  "lib/qa-citations.js",
+  "lib/qa-service.js",
 );
 
 const DEBUG = false;
@@ -44,7 +47,7 @@ const {
   fetch: globalThis.fetch,
 });
 
-const AI_TASK_KINDS = new Set(["analysis", "polish", "translate", "note-refine"]);
+const AI_TASK_KINDS = new Set(["analysis", "polish", "translate", "note-refine", "qa"]);
 const aiTasks = BILI_TASKS.createTaskManager({
   onChange(task) {
     chrome.runtime.sendMessage({ action: "aiTaskChanged", task }).catch(() => {});
@@ -93,6 +96,35 @@ const {
   },
   onTaskProgress: (taskId, patch) => aiTasks.progress(taskId, patch),
   logDebug: debugLog,
+  logError: (...args) => console.error(...args),
+});
+
+// 问答历史仓储（bili-digest 库的 qa 仓库，见 lib/idb.js）。
+let qaRepo = null;
+function qaRepository() {
+  if (!qaRepo) {
+    qaRepo = BILI_QA_SERVICE.createQaRepository({
+      driver: BILI_IDB.createObjectStoreDriver({
+        storeName: "qa",
+        indexedDB: globalThis.indexedDB,
+      }),
+    });
+  }
+  return qaRepo;
+}
+
+// 视频问答在 lib/qa-service.js。
+const qaService = BILI_QA_SERVICE.createQaService({
+  cache: BILI_CACHE,
+  dataReady: learningDataReady,
+  ensureTranscript,
+  learningRepository,
+  getSettings,
+  repository: qaRepository,
+  loadPromptSection,
+  requestAiCompletion,
+  aiErrorResponse,
+  onTaskProgress: (taskId, patch) => aiTasks.progress(taskId, patch),
   logError: (...args) => console.error(...args),
 });
 
@@ -490,6 +522,40 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .resolveNoteDraft(message.noteId, message.mode, message.expectedRevision)
       .then(sendResponse)
       .catch((error) => sendResponse(notesService.noteWriteErrorResponse(error)));
+    return true;
+  }
+
+  if (message?.action === "askQuestion") {
+    runManagedAiOperation(
+      message.taskId,
+      (signal) =>
+        qaService.askQuestion({
+          bvid: message.bvid,
+          page: message.page,
+          question: message.question,
+          signal,
+          taskId: message.taskId,
+        }),
+      { autoFinish: true },
+    )
+      .then(sendResponse)
+      .catch((error) => sendResponse(aiErrorResponse(error)));
+    return true;
+  }
+
+  if (message?.action === "getQaHistory") {
+    qaService
+      .getQaHistory(message.bvid, message.page)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ success: false, error: error.message }));
+    return true;
+  }
+
+  if (message?.action === "deleteQaEntry") {
+    qaService
+      .deleteQaEntry(message.id)
+      .then(sendResponse)
+      .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
 

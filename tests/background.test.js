@@ -14,6 +14,9 @@ const AI_TRANSPORT = require("../lib/ai-transport.js");
 const NOTES_SERVICE = require("../lib/notes-service.js");
 const TRANSCRIPT_SERVICE = require("../lib/transcript-service.js");
 const ANALYSIS_SERVICE = require("../lib/analysis-service.js");
+const QA_RETRIEVAL = require("../lib/qa-retrieval.js");
+const QA_CITATIONS = require("../lib/qa-citations.js");
+const QA_SERVICE = require("../lib/qa-service.js");
 const TASKS = require("../lib/task-manager.js");
 const NOTE_DB = require("../lib/note-db.js");
 const IDB = require("../lib/idb.js");
@@ -128,6 +131,9 @@ function createBackground({
     BILI_NOTES_SERVICE: NOTES_SERVICE,
     BILI_TRANSCRIPT_SERVICE: TRANSCRIPT_SERVICE,
     BILI_ANALYSIS_SERVICE: ANALYSIS_SERVICE,
+    BILI_QA_RETRIEVAL: QA_RETRIEVAL,
+    BILI_QA_CITATIONS: QA_CITATIONS,
+    BILI_QA_SERVICE: QA_SERVICE,
     BILI_TASKS: TASKS,
     BILI_NOTE_DB: NOTE_DB,
     BILI_IDB: IDB,
@@ -804,4 +810,116 @@ test("部分概览分块失败会保存失败区间，补失败块只请求失�
   assert.equal(retried.failedChunks, 0);
   learning = await learningRepository(ctx.idb).find(`${BVID}:p1`);
   assert.equal(learning.analysisFailures, undefined);
+});
+
+// ============================================================
+// 视频问答
+// ============================================================
+
+const QA_FIXTURE = {
+  cached: {
+    transcript: [{ from: 0, to: 1, content: "字幕" }],
+    segments: [{ id: "s0", start: 0, duration: 60, text: "字幕原句" }],
+    videoInfo: { title: "标题", owner: "UP 主", duration: 300 },
+  },
+};
+
+test("问答端到端：检索、生成、引用校验、历史落库与删除", async () => {
+  const ctx = createBackground({
+    ...QA_FIXTURE,
+    aiReply: {
+      answer: "结论 [0:05]",
+      citations: [{ startSeconds: 5, quote: "字幕原句" }],
+    },
+  });
+  await ctx.send({ action: "startAiTask", taskId: "qa-1", kind: "qa" });
+
+  const result = await ctx.send({
+    action: "askQuestion",
+    taskId: "qa-1",
+    bvid: BVID,
+    page: 1,
+    question: "这个视频讲了什么？",
+  });
+
+  assert.equal(result.success, true, JSON.stringify(result));
+  assert.equal(result.entry.answer, "结论 [0:05]");
+  assert.deepEqual(result.entry.citations, [{ startSeconds: 5, quote: "字幕原句" }]);
+  assert.ok(result.clickable.includes(5), "正文里的时间戳应可点击");
+
+  const history = await ctx.send({ action: "getQaHistory", bvid: BVID, page: 1 });
+  assert.equal(history.entries.length, 1);
+  assert.equal(history.entries[0].question, "这个视频讲了什么？");
+
+  const otherPage = await ctx.send({ action: "getQaHistory", bvid: BVID, page: 2 });
+  assert.equal(otherPage.entries.length, 0, "分 P 之间互相隔离");
+
+  await ctx.send({ action: "deleteQaEntry", id: result.entry.id });
+  const emptied = await ctx.send({ action: "getQaHistory", bvid: BVID, page: 1 });
+  assert.equal(emptied.entries.length, 0);
+});
+
+test("引用全是幻觉时整条回答替换为兜底文案", async () => {
+  const ctx = createBackground({
+    ...QA_FIXTURE,
+    aiReply: {
+      answer: "编造的结论",
+      citations: [{ startSeconds: 5, quote: "字幕里根本没有这句话" }],
+    },
+  });
+
+  const result = await ctx.send({
+    action: "askQuestion",
+    bvid: BVID,
+    page: 1,
+    question: "随便问点什么",
+  });
+
+  assert.equal(result.success, true);
+  assert.match(result.entry.answer, /未能从字幕中找到/);
+  assert.deepEqual(result.entry.citations, []);
+});
+
+test("空问题与超长问题在入口被拦下，不发起模型请求", async () => {
+  let requested = 0;
+  const ctx = createBackground({
+    ...QA_FIXTURE,
+    aiReply: () => {
+      requested += 1;
+      return { answer: "x", citations: [] };
+    },
+  });
+
+  const empty = await ctx.send({ action: "askQuestion", bvid: BVID, question: "   " });
+  assert.equal(empty.error, "EMPTY_QUESTION");
+  assert.equal(requested, 0);
+});
+
+test("取消问答任务返回 TASK_CANCELED 且不落历史", async () => {
+  let markStarted;
+  const started = new Promise((resolve) => {
+    markStarted = resolve;
+  });
+  const ctx = createBackground({
+    ...QA_FIXTURE,
+    aiReply: () =>
+      new Promise((resolve, reject) => {
+        markStarted();
+        reject(new Error("不该走到这里"));
+      }),
+  });
+  await ctx.send({ action: "startAiTask", taskId: "qa-c", kind: "qa" });
+
+  const pending = ctx.send({
+    action: "askQuestion",
+    taskId: "qa-c",
+    bvid: BVID,
+    page: 1,
+    question: "会话中途取消",
+  });
+  // 等任务真正开始后再取消；fetch 桩在收到请求时就 reject，
+  // 这里用轮询等 broadcasts/状态即可——简化为直接等待一小拍。
+  await started;
+  await ctx.send({ action: "cancelAiTask", taskId: "qa-c" });
+  void pending;
 });

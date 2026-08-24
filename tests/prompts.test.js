@@ -51,6 +51,12 @@ const PROMPTS = {
     targetText: "目标",
     afterText: "后文",
   },
+  "qa.md": {
+    videoTitle: "测试视频",
+    ownerName: "UP 主",
+    question: "用户的问题",
+    transcriptText: "[0:00] 字幕句子",
+  },
   "note-refine.md": {
     videoTitle: "测试标题",
     currentText: "用户当前笔记",
