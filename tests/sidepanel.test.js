@@ -137,7 +137,14 @@ function createContext({
       addEventListener() {},
       documentElement: { dataset: {} },
     },
-    navigator: { clipboard: { writeText: async () => {} } },
+    navigator: {
+      clipboard: {
+        writes: [],
+        async writeText(text) {
+          this.writes.push(text);
+        },
+      },
+    },
     chrome: {
       runtime: {
         async sendMessage(message) {
@@ -211,6 +218,7 @@ function createContext({
     ...context.__api,
     el: byId,
     chrome: context.chrome,
+    navigator: context.navigator,
     sent,
     openedTabs,
     seeks,
@@ -1667,4 +1675,51 @@ test("问答失败时恢复输入并移除占位卡", async () => {
   assert.equal(ctx.el("qaInput").value, "会失败的问题", "输入内容还给用户");
   assert.equal(ctx.el("qaHint").hidden, false);
   assert.match(ctx.el("qaHint").textContent, /还没配置好/);
+});
+
+test("问答卡片的存笔记与复制都有去向反馈", async () => {
+  const entry = {
+    id: "qa_1",
+    bvid: "BV1xx411c7mD",
+    page: 1,
+    question: "问题",
+    answer: "回答正文",
+    citations: [{ startSeconds: 30, quote: "引用原句" }],
+    clickable: [30],
+    createdAt: Date.now(),
+  };
+  let savedPayload = null;
+  const ctx = createContext({
+    transcript: transcriptResult(),
+    replies: {
+      getQaHistory: async () => ({ success: true, entries: [entry] }),
+      saveNote: async (message) => {
+        savedPayload = message;
+        return { success: true };
+      },
+    },
+  });
+  ctx.state.bvid = "BV1xx411c7mD";
+  ctx.state.page = 1;
+  ctx.switchTab("qa");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  const card = ctx.el("qaList").children[0];
+  const actions = card.children.find((child) => child.className === "entry-actions");
+  assert.ok(actions, "应有操作区");
+
+  // 存为笔记：发出 saveNote，正文含回答与引用，toast 确认去向。
+  await actions.children[0].dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(savedPayload.action, "saveNote");
+  assert.match(savedPayload.text, /回答正文/);
+  assert.match(savedPayload.text, /\[0:30\] 引用原句/);
+  assert.equal(ctx.el("toast").hidden, false);
+  assert.match(ctx.el("toast").textContent, /已存为笔记/);
+
+  // 复制：剪贴板收到同样内容，toast 提示成功。
+  await actions.children[1].dispatch("click");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(ctx.navigator.clipboard.writes, [savedPayload.text]);
+  assert.match(ctx.el("toast").textContent, /已复制/);
 });

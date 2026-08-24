@@ -1018,6 +1018,22 @@ button {
   overflow-wrap: anywhere;
 }
 
+/* 轻提示：底部浮出的一行确认，2 秒自动消失 */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 56px;
+  transform: translateX(-50%);
+  z-index: 60;
+  background: var(--accent-soft-strong);
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  backdrop-filter: blur(6px);
+}
+
 /* 视频问答 */
 .qa-input-row {
   display: flex;

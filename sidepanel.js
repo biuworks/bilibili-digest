@@ -1409,6 +1409,17 @@ function replaceNoteState(target, source) {
 
 const QA_FALLBACK_HINT = "未能从字幕中找到足够的依据";
 let qaAsking = false;
+let toastTimer = null;
+
+function showToast(message) {
+  const node = el("toast");
+  node.textContent = message;
+  node.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    node.hidden = true;
+  }, 2000);
+}
 
 async function loadQaHistory() {
   // 进行中的占位卡不能被迟到的历史加载冲掉。
@@ -1624,27 +1635,46 @@ function renderQaCard(entry) {
 
   const actions = document.createElement("div");
   actions.className = "entry-actions";
+  // 存为笔记：图标容易让人以为是「编辑」，title 与保存后的 toast
+  // 把去向说清楚——笔记在「笔记」页里还能继续编辑。
   const saveNoteBtn = actionButton({
     iconName: "note",
-    title: "存为笔记",
-    onClick: async () => {
-      await sendToBackground(
-        {
-          action: "saveNote",
-          bvid: entry.bvid,
-          page: entry.page,
-          timestamp: (entry.citations || [])[0]?.startSeconds ?? 0,
-          text: qaCitationText(entry),
-        },
-        { idempotent: true },
-      );
+    title: "存为笔记（可在笔记页编辑）",
+    onClick: async (button) => {
+      button.disabled = true;
+      try {
+        const result = await sendToBackground(
+          {
+            action: "saveNote",
+            bvid: entry.bvid,
+            page: entry.page,
+            timestamp: (entry.citations || [])[0]?.startSeconds ?? 0,
+            text: qaCitationText(entry),
+          },
+          { idempotent: true },
+        );
+        if (result?.success) {
+          showToast(result.duplicate ? "这条已经在笔记里了" : "已存为笔记，去「笔记」页可查看和编辑");
+        } else {
+          showToast(result?.message || "存为笔记失败");
+        }
+      } catch (error) {
+        showToast(error?.message || "存为笔记失败");
+      } finally {
+        button.disabled = false;
+      }
     },
   });
   const copyBtn = actionButton({
     iconName: "copy",
     title: "复制回答",
     onClick: async () => {
-      await navigator.clipboard.writeText(qaCitationText(entry));
+      try {
+        await navigator.clipboard.writeText(qaCitationText(entry));
+        showToast("回答已复制到剪贴板");
+      } catch (error) {
+        showToast("复制失败：" + (error?.message || "剪贴板不可用"));
+      }
     },
   });
   actions.append(saveNoteBtn, copyBtn);
