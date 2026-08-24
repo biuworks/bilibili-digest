@@ -1727,10 +1727,10 @@ test("回答正文支持区间时间戳：显示区间、跳到起点", () => {
 
   const buttons = node.children.filter((child) => child.tagName === "button");
   assert.equal(buttons.length, 1, "越界的时间戳不渲染成按钮");
-  assert.equal(buttons[0].textContent, "[0:11-0:23]");
+  assert.equal(buttons[0].textContent, "0:11-0:23");
   // 桩的 textContent 不聚合子节点，从 children 重建全文核对。
   const rendered = node.children
     .map((child) => (typeof child === "string" ? child : child.textContent))
     .join("");
-  assert.equal(rendered, "依据见 [0:11-0:23] 与 [9:99] 越界");
+  assert.equal(rendered, "依据见 0:11-0:23 与 [9:99] 越界");
 });

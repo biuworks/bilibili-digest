@@ -818,7 +818,7 @@ test("部分概览分块失败会保存失败区间，补失败块只请求失�
 
 const QA_FIXTURE = {
   cached: {
-    transcript: [{ from: 0, to: 1, content: "字幕" }],
+    transcript: [{ start: 0, text: "字幕原句" }],
     segments: [{ id: "s0", start: 0, duration: 60, text: "字幕原句" }],
     videoInfo: { title: "标题", owner: "UP 主", duration: 300 },
   },
@@ -827,10 +827,7 @@ const QA_FIXTURE = {
 test("问答端到端：检索、生成、引用校验、历史落库与删除", async () => {
   const ctx = createBackground({
     ...QA_FIXTURE,
-    aiReply: {
-      answer: "结论 [0:05]",
-      citations: [{ startSeconds: 5, quote: "字幕原句" }],
-    },
+    aiReply: { answer: "结论 [0:05]" },
   });
   await ctx.send({ action: "startAiTask", taskId: "qa-1", kind: "qa" });
 
@@ -844,7 +841,10 @@ test("问答端到端：检索、生成、引用校验、历史落库与删除",
 
   assert.equal(result.success, true, JSON.stringify(result));
   assert.equal(result.entry.answer, "结论 [0:05]");
-  assert.deepEqual(result.entry.citations, [{ startSeconds: 5, quote: "字幕原句" }]);
+  // 依据由本地从字幕提取，不再依赖模型摘录。
+  assert.deepEqual(result.entry.citations, [
+    { startSeconds: 5, quote: "字幕原句" },
+  ]);
   assert.ok(result.entry.clickable.includes(5), "正文里的时间戳应可点击");
 
   const history = await ctx.send({ action: "getQaHistory", bvid: BVID, page: 1 });
@@ -862,10 +862,7 @@ test("问答端到端：检索、生成、引用校验、历史落库与删除",
 test("引用全是幻觉时整条回答替换为兜底文案", async () => {
   const ctx = createBackground({
     ...QA_FIXTURE,
-    aiReply: {
-      answer: "编造的结论",
-      citations: [{ startSeconds: 5, quote: "字幕里根本没有这句话" }],
-    },
+    aiReply: { answer: "编造的结论，没有任何时间戳" },
   });
 
   const result = await ctx.send({
