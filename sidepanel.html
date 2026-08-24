@@ -76,6 +76,7 @@
       <button class="tab active" data-tab="transcript" role="tab" aria-selected="true">字幕</button>
       <button class="tab" data-tab="overview" role="tab" aria-selected="false">概览</button>
       <button class="tab" data-tab="notes" role="tab" aria-selected="false">笔记</button>
+      <button class="tab" data-tab="qa" role="tab" aria-selected="false">问答</button>
     </nav>
   </header>
 
@@ -245,6 +246,25 @@
         <p id="notesEmptyText" class="state-text">
           播放时点播放器上的「笔记」按钮，或按 <kbd>n</kbd>，
           就能记下当前时间点的一条笔记。
+        </p>
+      </div>
+    </section>
+
+    <!-- 视频问答：独立于字幕管线的展示态，历史按视频与分 P 隔离 -->
+    <section id="qaPanel" hidden>
+      <div class="qa-input-row">
+        <input id="qaInput" class="search-input" type="text"
+               placeholder="针对这个视频提问，Enter 发送" autocomplete="off" />
+        <button id="qaAskBtn" class="qa-ask-btn" type="button">提问</button>
+      </div>
+      <p id="qaHint" class="qa-hint muted" hidden></p>
+      <div id="qaList" class="notes-list"></div>
+      <div id="qaEmpty" class="state" hidden>
+        <svg class="icon state-icon" aria-hidden="true"><use href="#i-ai"/></svg>
+        <p class="state-title">还没有问答</p>
+        <p class="state-text">
+          输入问题，AI 会先在字幕里检索相关内容再回答；
+          关键结论都带时间戳引用，点一下就能跳回原处。
         </p>
       </div>
     </section>

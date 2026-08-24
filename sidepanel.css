@@ -1018,6 +1018,62 @@ button {
   overflow-wrap: anywhere;
 }
 
+/* 视频问答 */
+.qa-input-row {
+  display: flex;
+  gap: 8px;
+  padding: 10px 12px 6px;
+}
+
+.qa-ask-btn {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  padding: 0 14px;
+  cursor: pointer;
+}
+
+.qa-ask-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.qa-hint {
+  margin: 0;
+  padding: 0 12px 6px;
+}
+
+.qa-question {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.qa-asked-at {
+  font-size: 11px;
+}
+
+.qa-citations {
+  display: block;
+}
+
+.qa-citation-row {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+
+.qa-citation-quote {
+  overflow-wrap: anywhere;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
 /* 搜索命中高亮（字幕与笔记同一套）：品牌粉浅底 + 全对比度文字，
    命中词要从 muted 正文里跳出来 */
 .entry-text mark,

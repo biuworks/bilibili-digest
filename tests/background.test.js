@@ -845,7 +845,7 @@ test("问答端到端：检索、生成、引用校验、历史落库与删除",
   assert.equal(result.success, true, JSON.stringify(result));
   assert.equal(result.entry.answer, "结论 [0:05]");
   assert.deepEqual(result.entry.citations, [{ startSeconds: 5, quote: "字幕原句" }]);
-  assert.ok(result.clickable.includes(5), "正文里的时间戳应可点击");
+  assert.ok(result.entry.clickable.includes(5), "正文里的时间戳应可点击");
 
   const history = await ctx.send({ action: "getQaHistory", bvid: BVID, page: 1 });
   assert.equal(history.entries.length, 1);

@@ -195,6 +195,7 @@ const SECTIONS = [
   "transcriptPanel",
   "overviewPanel",
   "notesPanel",
+  "qaPanel",
 ];
 
 // 笔记独立于字幕管线：即使字幕拉取失败，之前存的笔记也应该能看。
@@ -203,6 +204,10 @@ function render() {
 
   if (state.tab === "notes") {
     el("notesPanel").hidden = false;
+    return;
+  }
+  if (state.tab === "qa") {
+    el("qaPanel").hidden = false;
     return;
   }
   if (state.view !== "ready") {
@@ -244,6 +249,7 @@ function switchTab(tab) {
   hideExplain();
   updateFollowPill();
   if (tab === "notes") loadNotes();
+  if (tab === "qa") loadQaHistory();
   render();
 }
 
@@ -298,6 +304,7 @@ async function syncWithActiveTab({ force = false } = {}) {
   state.analysisFailures = [];
   await loadTranscript({ force });
   if (state.tab === "notes") loadNotes();
+  if (state.tab === "qa") loadQaHistory();
 }
 
 // ============================================================
@@ -1396,6 +1403,221 @@ function replaceNoteState(target, source) {
   Object.assign(target, source);
 }
 
+// ============================================================
+// 视频问答
+// ============================================================
+
+const QA_FALLBACK_HINT = "未能从字幕中找到足够的依据";
+let qaAsking = false;
+
+async function loadQaHistory() {
+  if (!state.bvid) {
+    renderQaList([]);
+    return;
+  }
+  const result = await sendToBackground({
+    action: "getQaHistory",
+    bvid: state.bvid,
+    page: state.page,
+  });
+  renderQaList(result?.entries || []);
+}
+
+function showQaHint(message) {
+  el("qaHint").textContent = message;
+  el("qaHint").hidden = false;
+}
+
+function setQaAsking(asking) {
+  qaAsking = asking;
+  el("qaAskBtn").disabled = asking;
+  el("qaAskBtn").textContent = asking ? "停止" : "提问";
+}
+
+async function submitQuestion() {
+  if (qaAsking) {
+    // 进行中按钮变「停止」：只取消在途任务，不清输入。
+    const running = el("qaAskBtn").dataset.taskId;
+    if (running) await sendToBackground({ action: "cancelAiTask", taskId: running });
+    return;
+  }
+  const question = el("qaInput").value.trim();
+  if (!question) return;
+
+  const taskId = `qa_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  el("qaAskBtn").dataset.taskId = taskId;
+  setQaAsking(true);
+  hideQaHint();
+
+  try {
+    await sendToBackground({ action: "startAiTask", taskId, kind: "qa" });
+    const result = await sendToBackground({
+      action: "askQuestion",
+      taskId,
+      bvid: state.bvid,
+      page: state.page,
+      question,
+    });
+
+    if (!result?.success) {
+      showQaHint(result?.message || "问答失败，请重试。");
+      return;
+    }
+
+    el("qaInput").value = "";
+    renderQaListPrepend(result.entry);
+  } catch (error) {
+    showQaHint(error?.message || "问答失败，请重试。");
+  } finally {
+    setQaAsking(false);
+    delete el("qaAskBtn").dataset.taskId;
+    updateQaEmptyState();
+  }
+}
+
+// 列表以 DOM 为准（prepend 新卡片），这里维护一份轻量镜像供清空判断。
+let qaEntriesMirror = [];
+function currentQaEntries() {
+  return qaEntriesMirror;
+}
+
+function renderQaList(entries) {
+  qaEntriesMirror = Array.isArray(entries) ? entries : [];
+  const listNode = el("qaList");
+  listNode.textContent = "";
+  for (const entry of qaEntriesMirror) listNode.appendChild(renderQaCard(entry));
+  updateQaEmptyState();
+}
+
+function renderQaListPrepend(entry) {
+  qaEntriesMirror.unshift(entry);
+  const listNode = el("qaList");
+  listNode.prepend(renderQaCard(entry));
+}
+
+function updateQaEmptyState() {
+  el("qaEmpty").hidden = qaEntriesMirror.length > 0;
+}
+
+function hideQaHint() {
+  el("qaHint").hidden = true;
+}
+
+/** 回答正文里的 [M:SS] 渲染成可点击的时间戳按钮；越界的保留纯文本。 */
+function appendAnswerText(node, answer, clickableSeconds) {
+  const source = String(answer || "");
+  node.textContent = "";
+  let cursor = 0;
+  const pattern = /\[(\d{1,3}:[0-5]\d)\]/g;
+  const clickable = new Set(clickableSeconds || []);
+  for (const match of source.matchAll(pattern)) {
+    const seconds = BILI_QA_CITATIONS.timestampToSeconds(match[1]);
+    const at = match.index;
+    if (at > cursor) node.append(source.slice(cursor, at));
+    if (seconds !== null && clickable.has(seconds)) {
+      node.append(makeTimestampButton(match[1], seconds));
+    } else {
+      node.append(match[0]);
+    }
+    cursor = at + match[0].length;
+  }
+  if (cursor < source.length) node.append(source.slice(cursor));
+}
+
+function makeTimestampButton(label, seconds) {
+  const button = document.createElement("button");
+  button.className = "entry-time time-btn";
+  button.textContent = label;
+  button.title = "跳到这个时间点";
+  button.addEventListener("click", () => seekTo(seconds));
+  return button;
+}
+
+function qaCitationText(entry) {
+  const lines = entry.citations.map(
+    (citation) =>
+      `[${BILI_QA_CITATIONS.secondsToTimestamp(citation.startSeconds)}] ${citation.quote}`,
+  );
+  return [entry.answer, ...lines].filter(Boolean).join("\n").slice(0, 3000);
+}
+
+function renderQaCard(entry) {
+  const card = document.createElement("div");
+  card.className = "note qa-card";
+
+  const head = document.createElement("div");
+  head.className = "entry-head";
+  const askedAt = document.createElement("span");
+  askedAt.className = "qa-asked-at muted";
+  askedAt.textContent = new Date(entry.createdAt).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  const remove = actionButton({
+    iconName: "trash",
+    title: "删除这条问答",
+    onClick: async () => {
+      await sendToBackground({ action: "deleteQaEntry", id: entry.id }, { idempotent: true });
+      renderQaList(currentQaEntries().filter((item) => item.id !== entry.id));
+    },
+  });
+  remove.classList.add("note-delete");
+  head.append(askedAt, remove);
+
+  const question = document.createElement("p");
+  question.className = "qa-question";
+  question.textContent = `问：${entry.question}`;
+
+  const answer = document.createElement("div");
+  answer.className = "entry-text";
+  appendAnswerText(answer, entry.answer, entry.clickable);
+
+  const citations = document.createElement("div");
+  citations.className = "note-source qa-citations";
+  for (const citation of entry.citations || []) {
+    const row = document.createElement("div");
+    row.className = "qa-citation-row";
+    row.append(makeTimestampButton(BILI_QA_CITATIONS.secondsToTimestamp(citation.startSeconds), citation.startSeconds));
+    const quote = document.createElement("span");
+    quote.className = "qa-citation-quote";
+    quote.textContent = citation.quote;
+    row.appendChild(quote);
+    citations.appendChild(row);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "entry-actions";
+  const saveNoteBtn = actionButton({
+    iconName: "note",
+    title: "存为笔记",
+    onClick: async () => {
+      await sendToBackground(
+        {
+          action: "saveNote",
+          bvid: entry.bvid,
+          page: entry.page,
+          timestamp: (entry.citations || [])[0]?.startSeconds ?? 0,
+          text: qaCitationText(entry),
+        },
+        { idempotent: true },
+      );
+    },
+  });
+  const copyBtn = actionButton({
+    iconName: "copy",
+    title: "复制回答",
+    onClick: async () => {
+      await navigator.clipboard.writeText(qaCitationText(entry));
+    },
+  });
+  actions.append(saveNoteBtn, copyBtn);
+
+  card.append(head, question, answer);
+  if ((entry.citations || []).length) card.append(citations);
+  card.append(actions);
+  return card;
+}
+
 // 搜索时把命中片段包进 <mark>。只用 DOM API：项目不走 innerHTML
 // （XSS / Trusted Types 防线）。非搜索路径维持原样 textContent。
 function appendHighlighted(parent, text, query) {
@@ -2124,6 +2346,11 @@ function setupEventListeners() {
   for (const button of document.querySelectorAll(".tab")) {
     button.addEventListener("click", () => switchTab(button.dataset.tab));
   }
+
+  el("qaAskBtn").addEventListener("click", submitQuestion);
+  el("qaInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") submitQuestion();
+  });
 
   document.addEventListener("selectionchange", onSelectionChange);
 
