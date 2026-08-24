@@ -1620,6 +1620,11 @@ function renderQaCard(entry) {
 
   const citations = document.createElement("div");
   citations.className = "note-source qa-citations";
+  // 没有标签的引用原句会被当成莫名其妙的复读——说明这是回答的依据。
+  const citationsLabel = document.createElement("div");
+  citationsLabel.className = "qa-citations-label";
+  citationsLabel.textContent = "字幕依据（点击时间戳跳转）";
+  citations.appendChild(citationsLabel);
   for (const citation of entry.citations || []) {
     const row = document.createElement("div");
     row.className = "qa-citation-row";
