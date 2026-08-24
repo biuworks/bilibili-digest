@@ -438,7 +438,7 @@ function renderSegments(segments = []) {
 
     const time = document.createElement("span");
     time.className = "segment-time";
-    time.textContent = formatTimestamp(segment.start);
+    time.textContent = BILI_TRANSCRIPT.formatTimestamp(segment.start);
 
     const text = document.createElement("span");
     text.className = "segment-text";
@@ -532,11 +532,6 @@ function paintSegmentText(node, segment) {
     return;
   }
   writeText(node, segmentDisplayText(segment));
-}
-
-function formatTimestamp(seconds) {
-  const total = Math.max(0, Math.floor(Number(seconds) || 0));
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
 // 用户正在选词时，点击不应该被当成跳转。
@@ -1905,7 +1900,7 @@ function transcriptAsText() {
   const bilingual = state.transcriptMode === "bilingual";
   return (state.data?.segments || [])
     .map((segment) => {
-      const stamp = `[${formatTimestamp(segment.start)}]`;
+      const stamp = `[${BILI_TRANSCRIPT.formatTimestamp(segment.start)}]`;
       if (!bilingual) return `${stamp} ${segmentDisplayText(segment)}`;
       const source = sourceText(segment);
       const translated = state.translated[segment.id];
