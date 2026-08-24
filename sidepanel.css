@@ -1018,6 +1018,15 @@ button {
   overflow-wrap: anywhere;
 }
 
+/* 搜索命中高亮：品牌粉的浅底而不是默认黄，跟暖纸面同一个色族 */
+.entry-text mark,
+.note-source mark {
+  background: var(--accent-soft-strong);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
 .quote .entry-text {
   color: var(--text);
 }

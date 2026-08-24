@@ -23,15 +23,25 @@ const ROOT = path.join(__dirname, "..");
 function createElement(tag = "div") {
   const queried = new Map();
   const listeners = new Map();
+  let text = "";
   return {
     tagName: tag,
     className: "",
-    textContent: "",
     hidden: false,
     disabled: false,
     style: {},
     dataset: {},
     children: [],
+    attributes: {},
+    // 与真实 DOM 一致：对 textContent 赋值会清掉全部子节点，
+    // 否则「先清空再重渲染」的列表在测试里会残留旧节点。
+    get textContent() {
+      return text;
+    },
+    set textContent(value) {
+      text = String(value ?? "");
+      this.children.length = 0;
+    },
     attributes: {},
     setAttribute(name, value) {
       this.attributes[name] = String(value);
@@ -167,6 +177,7 @@ function createContext({ transcript, analysis, videoAvailable = { available: tru
     BILI_AI: require("../lib/ai.js"),
     BILI_CONCURRENCY: require("../lib/concurrency.js"),
     BILI_LEARNING_STORE: require("../lib/learning-store.js"),
+    BILI_HIGHLIGHT: require("../lib/highlight.js"),
     BILI_SETTINGS: require("../settings.js"),
     Blob,
     URL,
@@ -1472,9 +1483,29 @@ test("笔记搜索过滤当前列表，导出也只含匹配项", () => {
   assert.match(ctx.el("notesCount").textContent, /1\//);
   assert.equal(ctx.el("notesEmpty").hidden, true);
 
+  // 命中的卡片里，正文命中处应包成 <mark>。桩的 querySelector 不查真实
+  // 子树，直接遍历 children。
+  function collectMarks(nodes, found = []) {
+    for (const node of nodes) {
+      if (node?.tagName === "mark") found.push(node);
+      if (Array.isArray(node?.children)) collectMarks(node.children, found);
+    }
+    return found;
+  }
+  const marks = collectMarks(ctx.el("notesList").children);
+  assert.ok(marks.length >= 1, "搜索命中应渲染出 mark 高亮");
+  assert.equal(marks[0].textContent, "结构");
+
   ctx.exportNotes();
   assert.equal(ctx.downloads.length, 1);
   assert.equal(ctx.downloads[0].download, "第二课-笔记.md");
+
+  ctx.applyNotesSearch("");
+  assert.equal(
+    collectMarks(ctx.el("notesList").children).length,
+    0,
+    "清空关键词后不应残留高亮",
+  );
 
   ctx.applyNotesSearch("没有这种内容");
   assert.equal(ctx.el("notesEmptyTitle").textContent, "没有匹配的笔记");

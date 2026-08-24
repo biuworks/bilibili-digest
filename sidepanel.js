@@ -1406,6 +1406,28 @@ function replaceNoteState(target, source) {
   Object.assign(target, source);
 }
 
+// 搜索时把命中片段包进 <mark>。只用 DOM API：项目不走 innerHTML
+// （XSS / Trusted Types 防线）。非搜索路径维持原样 textContent。
+function appendHighlighted(parent, text, query) {
+  const source = String(text ?? "");
+  const segments = BILI_HIGHLIGHT.splitMatches(source, query);
+  if (!BILI_HIGHLIGHT.hasMatch(segments)) {
+    parent.textContent = source;
+    return;
+  }
+  parent.textContent = "";
+  for (const segment of segments) {
+    if (!segment.text) continue;
+    if (segment.hit) {
+      const mark = document.createElement("mark");
+      mark.textContent = segment.text;
+      parent.append(mark);
+    } else {
+      parent.append(segment.text);
+    }
+  }
+}
+
 function renderNoteCard(note) {
   const card = document.createElement("div");
   card.className = "note";
@@ -1449,9 +1471,11 @@ function renderNoteCard(note) {
 
   head.append(time, remove);
 
+  const searching = Boolean(String(state.notesQuery || "").trim());
   const text = document.createElement("p");
   text.className = "entry-text";
-  text.textContent = note.text;
+  if (searching) appendHighlighted(text, note.text, state.notesQuery);
+  else text.textContent = note.text;
 
   const away =
     note.bvid !== state.bvid || Number(note.page || 1) !== Number(state.page || 1);
@@ -1463,13 +1487,15 @@ function renderNoteCard(note) {
   if (away && note.videoTitle) {
     const title = document.createElement("span");
     title.className = "note-source-title";
-    title.textContent = note.videoTitle;
+    if (searching) appendHighlighted(title, note.videoTitle, state.notesQuery);
+    else title.textContent = note.videoTitle;
     source.appendChild(title);
   }
   if (note.ownerName) {
     const owner = document.createElement("span");
     owner.className = "note-source-owner";
-    owner.textContent = note.ownerName;
+    if (searching) appendHighlighted(owner, note.ownerName, state.notesQuery);
+    else owner.textContent = note.ownerName;
     owner.title = "UP 主";
     source.appendChild(owner);
   }
