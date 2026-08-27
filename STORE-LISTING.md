@@ -36,7 +36,7 @@ Chrome 应用商店与 Edge 加载项共用这一份，改动请两边同步。
 ### 安装包
 
 ```text
-dist/digest-for-bilibili-0.4.0.zip
+dist/digest-for-bilibili-0.4.1.zip
 ```
 
 Chrome 开发者后台与 Edge 合作伙伴中心上传同一份。若 0.3.0 审核被拒，本次提交的基线按上面「变更摘要草稿」的前提合并重写。
@@ -329,7 +329,7 @@ https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
 - [ ] 已 `git push`，GitHub 上的 `PRIVACY.md` 与本次安装包一致。
 - [ ] 更新 `manifest.json` 版本号和本文件的发布状态。
 - [ ] `npm test` 全部通过。
-- [ ] `npm run package` 得到 `dist/digest-for-bilibili-0.4.0.zip`。
+- [ ] `npm run package` 得到 `dist/digest-for-bilibili-0.4.1.zip`。
 - [ ] ZIP 顶层直接包含 `manifest.json`。
 - [ ] ZIP 不包含测试、截图、README、隐私政策或本文件。
 - [ ] 同一个解压包分别在 Chrome 与 Edge 中旁加载验证。

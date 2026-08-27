@@ -373,6 +373,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     handleFetchTranscript(message.bvid, {
       page: message.page,
       forceRefresh: message.forceRefresh,
+      lang: message.lang,
     })
       .then(sendResponse)
       .catch((error) => sendResponse({ success: false, error: error.message }));

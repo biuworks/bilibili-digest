@@ -1,11 +1,13 @@
 {
   "name": "bilibili-digest",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Turn Bilibili videos into learning resources: transcripts, punctuation repair, bilingual subtitles, AI overviews, and timestamped notes. Bilibili port of youtube-digest.",
   "license": "MIT",
   "scripts": {
     "test": "node --test tests/*.test.js",
-    "package": "bash scripts/package.sh"
+    "package": "bash scripts/package.sh",
+    "sync:live": "bash scripts/sync-live.sh",
+    "live-hook:install": "bash scripts/install-live-hook.sh"
   }
 }

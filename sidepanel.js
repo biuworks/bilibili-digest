@@ -337,8 +337,8 @@ function withTimeout(promise, ms, message) {
   });
 }
 
-async function loadTranscript({ force = false } = {}) {
-  const key = `${state.bvid}:${state.page}:${force ? "force" : "normal"}`;
+async function loadTranscript({ force = false, lang = "" } = {}) {
+  const key = `${state.bvid}:${state.page}:${force ? "force" : "normal"}:${lang || "auto"}`;
   if (transcriptLoad?.key === key) return transcriptLoad.promise;
   if (transcriptLoad) await transcriptLoad.promise;
 
@@ -362,6 +362,7 @@ async function loadTranscript({ force = false } = {}) {
             bvid: requestedBvid,
             page: requestedPage,
             forceRefresh: force,
+            lang,
           },
           { idempotent: true },
         ),
@@ -412,17 +413,60 @@ async function loadTranscript({ force = false } = {}) {
   }
 }
 
+function subtitleTrackLabel(track) {
+  return `${track.langLabel || track.lang}${track.isAi ? " · AI" : ""}`;
+}
+
+function switchSubtitleLang(lang) {
+  el("subtitleMenu").open = false;
+  if (!lang || lang === state.data?.language) return undefined;
+  return loadTranscript({ lang });
+}
+
+// 一条轨道时是普通徽章；多条时把徽章换成下拉菜单，点选即切字幕语言。
+function renderSubtitleMenu(result) {
+  const badge = el("subtitleBadge");
+  const menu = el("subtitleMenu");
+  const tracks = Array.isArray(result?.availableTracks) ? result.availableTracks : [];
+  if (!result || tracks.length < 2) {
+    menu.hidden = true;
+    menu.open = false;
+    if (result) {
+      badge.textContent = `${result.languageLabel || result.language}${result.isAiSubtitle ? " · AI" : ""}`;
+      badge.hidden = false;
+    } else {
+      badge.hidden = true;
+    }
+    return;
+  }
+
+  badge.hidden = true;
+  menu.hidden = false;
+  el("subtitleMenuLabel").textContent = subtitleTrackLabel({
+    langLabel: result.languageLabel || result.language,
+    isAi: result.isAiSubtitle,
+  });
+
+  const popover = el("subtitleMenuPopover");
+  popover.textContent = "";
+  for (const track of tracks) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "segmented-btn";
+    button.classList.toggle("active", track.lang === result.language);
+    button.textContent = subtitleTrackLabel(track);
+    button.addEventListener("click", async () => {
+      await switchSubtitleLang(track.lang);
+    });
+    popover.appendChild(button);
+  }
+}
+
 function renderMeta(videoInfo, result, fromCache) {
   el("videoTitle").textContent = videoInfo?.title || "";
   el("videoOwner").textContent = videoInfo?.owner || "";
 
-  const badge = el("subtitleBadge");
-  if (result) {
-    badge.textContent = `${result.languageLabel || result.language}${result.isAiSubtitle ? " · AI" : ""}`;
-    badge.hidden = false;
-  } else {
-    badge.hidden = true;
-  }
+  renderSubtitleMenu(result);
 
   el("cacheBadge").hidden = !fromCache;
   el("videoMeta").hidden = false;

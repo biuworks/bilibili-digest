@@ -859,6 +859,56 @@ button {
   transform: rotate(45deg);
 }
 
+/* 字幕语言菜单：徽章当开关用，下拉箭头单独画在文字后面，不跟文字挤在一起。 */
+.lang-menu {
+  width: fit-content;
+}
+
+.lang-menu > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  transition:
+    color var(--dur) var(--ease),
+    background-color var(--dur) var(--ease);
+}
+
+.lang-menu > summary::after {
+  width: 0;
+  height: 0;
+  margin: 0;
+  border-right: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  border-left: 4px solid transparent;
+  transform: none;
+  opacity: 0.8;
+}
+
+.lang-menu > summary:hover {
+  color: var(--accent-strong);
+  background: var(--accent-soft-strong);
+}
+
+.lang-menu[open] > summary::after {
+  transform: rotate(180deg);
+}
+
+.lang-menu > summary:focus-visible {
+  outline: 2px solid var(--accent-soft-strong);
+  outline-offset: 1px;
+}
+
+/* 徽章位于标题栏最左侧，弹层必须从徽章向右展开；
+   沿用全局的 right:0 会往左弹出，超出面板左缘被裁掉。 */
+.lang-menu .action-menu-popover {
+  left: 0;
+  right: auto;
+  max-width: min(248px, calc(100vw - 56px));
+  max-height: 260px;
+  overflow-y: auto;
+}
+
 .action-menu-popover {
   position: absolute;
   z-index: 20;

@@ -65,11 +65,18 @@
 
     <div id="videoMeta" class="video-meta" hidden>
       <p id="videoTitle" class="video-title"></p>
-      <p class="video-submeta">
+      <!-- 用 div 而不是 p：details 不是 phrasing 内容，嵌进 p 会被解析器
+           隐式拆断，导致 owner / 语言徽章 / 缓存徽章各占一行。 -->
+      <div class="video-submeta">
         <span id="videoOwner"></span>
         <span id="subtitleBadge" class="badge" hidden></span>
+        <!-- 单条字幕轨时就是普通徽章；多条时展开同列表，点击切换字幕语言 -->
+        <details id="subtitleMenu" class="action-menu lang-menu" hidden title="切换字幕语言" aria-label="切换字幕语言">
+          <summary id="subtitleMenuLabel" class="badge"></summary>
+          <div id="subtitleMenuPopover" class="action-menu-popover action-menu-popover-wide action-menu-options" role="menu"></div>
+        </details>
         <span id="cacheBadge" class="badge badge-muted" hidden>缓存</span>
-      </p>
+      </div>
     </div>
 
     <nav class="tabs" role="tablist">

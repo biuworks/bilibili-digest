@@ -210,7 +210,7 @@ function createContext({
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, loadTranscript, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground, submitQuestion, switchTab, appendAnswerText };`,
+    `${source}\n;globalThis.__api = { state, loadTranscript, switchSubtitleLang, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground, submitQuestion, switchTab, appendAnswerText };`,
     context,
   );
 
@@ -653,6 +653,78 @@ test("概览工具栏的文字选区不会触发划词解释浮层", () => {
   ctx.onSelectionChange();
 
   assert.equal(ctx.el("explainTooltip").hidden, true);
+});
+
+// ============================================================
+// 字幕语言切换：多条轨道时字幕徽章变下拉菜单
+// ============================================================
+
+const ZHVV_AI_TRACKS = [
+  { lang: "zh-CN", langLabel: "中文", isAi: false },
+  { lang: "ai-zh", langLabel: "中文", isAi: true },
+  { lang: "en-US", langLabel: "英语", isAi: true },
+];
+
+test("多条字幕轨：徽章变成下拉菜单，点选后切换字幕语言", async () => {
+  const replies = {
+    fetchTranscript: async (message) => {
+      if (message.lang === "en-US") {
+        return transcriptResult({
+          fromCache: false,
+          language: "en-US",
+          languageLabel: "英语（自动生成）",
+          isAiSubtitle: true,
+          availableTracks: ZHVV_AI_TRACKS,
+        });
+      }
+      return transcriptResult({
+        language: "zh-CN",
+        languageLabel: "中文",
+        isAiSubtitle: false,
+        availableTracks: ZHVV_AI_TRACKS,
+      });
+    },
+  };
+  const ctx = createContext({ transcript: null, replies });
+  ctx.state.bvid = "BV1xx411c7mD";
+
+  await ctx.loadTranscript();
+
+  const menu = ctx.el("subtitleMenu");
+  assert.equal(menu.hidden, false, "多条轨道时应显示语言菜单");
+  assert.equal(ctx.el("subtitleBadge").hidden, true, "badge 让位给菜单 summary");
+  assert.equal(ctx.el("subtitleMenuLabel").textContent, "中文");
+  const buttons = ctx.el("subtitleMenuPopover").children;
+  assert.equal(buttons.length, 3);
+  assert.equal(buttons[2].textContent, "英语 · AI");
+
+  await buttons[2].dispatch("click");
+
+  assert.equal(ctx.state.isChinese, false, "切到英文字幕应清掉中文态");
+  assert.equal(ctx.el("subtitleMenuLabel").textContent, "英语（自动生成） · AI");
+  const request = [...ctx.sent]
+    .reverse()
+    .find((message) => message.action === "fetchTranscript");
+  assert.equal(request.lang, "en-US");
+  assert.equal(request.forceRefresh, false, "切语言只指定 lang，不必强制绕过缓存");
+});
+
+test("只有一条字幕轨：照常显示徽章，不出现语言菜单", async () => {
+  const ctx = createContext({
+    transcript: transcriptResult({
+      language: "zh-CN",
+      languageLabel: "中文",
+      isAiSubtitle: false,
+      availableTracks: [{ lang: "zh-CN", langLabel: "中文", isAi: false }],
+    }),
+  });
+  ctx.state.bvid = "BV1xx411c7mD";
+
+  await ctx.loadTranscript();
+
+  assert.equal(ctx.el("subtitleMenu").hidden, true);
+  assert.equal(ctx.el("subtitleBadge").hidden, false);
+  assert.equal(ctx.el("subtitleBadge").textContent, "中文");
 });
 
 // ============================================================

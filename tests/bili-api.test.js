@@ -140,6 +140,20 @@ test("自定义语言偏好可以改变选轨结果", () => {
   assert.equal(API.pickSubtitleTrack(tracks, ["en-US", "zh-CN"]).url, "en");
 });
 
+test("按语言点名选轨：手动切换字幕语言", () => {
+  const tracks = [
+    { lang: "zh-CN", langLabel: "中文", url: "zh", isAi: false },
+    { lang: "en-US", langLabel: "英语", url: "en", isAi: true },
+  ];
+  assert.equal(API.pickSubtitleTrackByLang(tracks, "en-US").url, "en");
+  assert.equal(API.pickSubtitleTrackByLang(tracks, "zh-CN").url, "zh");
+
+  // 列表里没有这条语言时（风控、列表变化），回退到偏好选择而不是报错。
+  assert.equal(API.pickSubtitleTrackByLang(tracks, "ja-JP").url, "zh");
+  assert.equal(API.pickSubtitleTrackByLang(tracks, "").url, "zh");
+  assert.equal(API.pickSubtitleTrackByLang([], "en-US"), null);
+});
+
 test("字幕正文转成 {text, start, duration}", () => {
   const entries = API.normalizeSubtitleBody({
     body: [
