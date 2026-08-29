@@ -12,6 +12,26 @@ function note(id, overrides = {}) {
   return { id, text: `笔记 ${id}`, createdAt: 1000, ...overrides };
 }
 
+test("IndexedDB 打开失败后允许重连：瞬时故障不毒化整个生命周期", async () => {
+  const realIdb = createMemoryIndexedDb();
+  let shouldFail = true;
+  const flakyIdb = {
+    open(name, version) {
+      if (shouldFail) {
+        const request = { onupgradeneeded: null, onsuccess: null, onerror: null, result: null };
+        queueMicrotask(() => request.onerror?.({ target: request }));
+        return request;
+      }
+      return realIdb.open(name, version);
+    },
+  };
+  const driver = NOTE_DB.createIndexedDbDriver({ indexedDB: flakyIdb });
+
+  await assert.rejects(() => driver.count(), { message: "IndexedDB 打开失败" });
+  shouldFail = false; // 磁盘/连接恢复
+  assert.equal(await driver.count(), 0, "被拒绝的打开 promise 不能被永久缓存");
+});
+
 // ============================================================
 // 内存驱动
 // ============================================================

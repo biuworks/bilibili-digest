@@ -113,6 +113,61 @@ test("地址非法时 vendorExtras 不抛错", () => {
   assert.deepEqual(provider.vendorExtras(""), {});
 });
 
+test("thinking 只匹配 DeepSeek 域名本身与其子域，形近域名不注入", () => {
+  const lookalike = provider.buildChatRequest({
+    settings: settings.normalize({
+      presetId: "custom",
+      protocol: PROTOCOLS.OPENAI,
+      aiApiKey: "k",
+      aiBaseUrl: "https://mydeepseek.com/v1",
+      aiModel: "m",
+    }),
+    messages: MESSAGES,
+    maxTokens: 100,
+  });
+  assert.equal("thinking" in lookalike.body, false, "形近域名的严格网关会拒绝未知参数");
+
+  const apex = provider.buildChatRequest({
+    settings: settings.normalize({
+      presetId: "custom",
+      protocol: PROTOCOLS.OPENAI,
+      aiApiKey: "k",
+      aiBaseUrl: "https://deepseek.com",
+      aiModel: "m",
+    }),
+    messages: MESSAGES,
+    maxTokens: 100,
+  });
+  assert.deepEqual(apex.body.thinking, { type: "disabled" }, "裸域名 deepseek.com 也算 DeepSeek");
+});
+
+test("OpenAI 推理系列改用 max_completion_tokens 且不带自定义 temperature", () => {
+  const reasoning = provider.buildChatRequest({
+    settings: settings.normalize({
+      presetId: "custom",
+      protocol: PROTOCOLS.OPENAI,
+      aiApiKey: "k",
+      aiBaseUrl: "https://api.openai.com/v1",
+      aiModel: "o3",
+    }),
+    messages: MESSAGES,
+    maxTokens: 100,
+    temperature: 0.2,
+  });
+  assert.equal(reasoning.body.max_tokens, undefined);
+  assert.equal(reasoning.body.max_completion_tokens, 100);
+  assert.equal("temperature" in reasoning.body, false, "推理模型只认默认 temperature");
+
+  const regular = provider.buildChatRequest({
+    settings: { ...openaiSettings, aiModel: "gpt-4o" },
+    messages: MESSAGES,
+    maxTokens: 100,
+    temperature: 0.2,
+  });
+  assert.equal(regular.body.max_tokens, 100);
+  assert.equal(regular.body.temperature, 0.2, "常规模型保持标准参数");
+});
+
 // ============================================================
 // Anthropic 协议
 // ============================================================

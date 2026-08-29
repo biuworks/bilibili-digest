@@ -7,6 +7,7 @@ test("时间戳解析：M:SS 双向转换，非法输入拒绝", () => {
   assert.equal(C.timestampToSeconds("03:12"), 192);
   assert.equal(C.timestampToSeconds("0:05"), 5);
   assert.equal(C.timestampToSeconds("75:20"), 4520, "超一小时延续分钟制");
+  assert.equal(C.timestampToSeconds("1000:30"), 60030, "四位分钟：超长直播回放不丢引用");
   assert.equal(C.timestampToSeconds("3:5"), null, "秒必须两位");
   assert.equal(C.timestampToSeconds(""), null);
   assert.equal(C.secondsToTimestamp(192), "3:12");

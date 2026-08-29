@@ -87,6 +87,22 @@ test("容忍数组或对象末尾多出来的逗号", () => {
   assert.deepEqual(AI.parseLooseJson('{"a":[1,2,],}'), { a: [1, 2] });
 });
 
+test("截断停在逗号后也能补齐：长数组最常见的截断点", () => {
+  // 对象数组靠「截到最后大括号」的清洗恰好救场，这里钉住
+  assert.deepEqual(
+    AI.parseLooseJson('{"chapters": [{"a": 1}, {"b": 2},'),
+    { chapters: [{ a: 1 }, { b: 2 }] },
+  );
+  // 基本类型数组与信封层没有大括号可依托，靠剥悬尾逗号
+  assert.deepEqual(
+    AI.parseLooseJson('{"keyQuotes": ["一句", "两句",'),
+    { keyQuotes: ["一句", "两句"] },
+  );
+  assert.deepEqual(JSON.parse(AI.repairTruncatedJson('{"text": "结论",')), {
+    text: "结论",
+  });
+});
+
 test("修复被截断的 JSON：字符串与括号停在半路", () => {
   assert.deepEqual(
     AI.parseLooseJson('{"answer": "你好 [0:02'),
