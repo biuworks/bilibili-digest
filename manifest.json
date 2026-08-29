@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "default_locale": "zh_CN",
   "name": "__MSG_extensionName__",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "minimum_chrome_version": "116",
   "description": "__MSG_extensionDescription__",
   "permissions": ["sidePanel", "storage", "tabs"],

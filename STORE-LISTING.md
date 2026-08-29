@@ -7,70 +7,43 @@ Chrome 应用商店与 Edge 加载项共用这一份，改动请两边同步。
 
 | 商店 | 版本 | 上线日期 | 链接 |
 | --- | --- | --- | --- |
-| Chrome Web Store | 0.2.0 | 2026-08-15（0.1.0）/ 2026-08-22（0.2.0） | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
-| Microsoft Edge Add-ons | 0.2.0 | 2026-08-17（0.1.0）/ 2026-08-22（0.2.0） | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
+| Chrome Web Store | 0.4.2（提审中） | 0.1.0 2026-08-15 / 0.2.0 2026-08-22 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
+| Microsoft Edge Add-ons | 0.4.2（提审中） | 0.1.0 2026-08-17 / 0.2.0 2026-08-22 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
 
-两个商店用**同一个 zip**。0.3.0 相对商店里的 0.2.0：修复了部分用户升级后扩展后台无响应、完全取不到字幕的缺陷；新增全部笔记搜索与 JSON 备份 / 恢复、完整学习稿导出、概览失败分块单独补生成、界面字号自定义。
-
-### 0.4.0 变更摘要草稿（相对 0.3.0）
-
-> 前提：若 0.3.0 审核被拒，0.4.0 的基线改回 0.2.0，两段摘要合并重写。
-
-- 新增「问答」标签页：针对当前视频自由提问，AI 先在字幕里检索相关内容
-  再回答；关键结论附带时间戳引用，点击跳回视频对应位置；引用必须能在
-  字幕原文中找到，找不到依据时如实回答「未找到」，不编造。
-- 字幕搜索与笔记搜索的命中关键词高亮显示。
-- 本地存储升级为浏览器数据库（IndexedDB）：笔记、概览与字幕缓存不再受
-  容量上限约束，升级时自动迁移，无需任何手动操作。
-- 内部架构模块化重构（用户无感），为后续功能打地基。
-
-注意措辞红线：不出现厂商名；IndexedDB 属「本地存储」范畴，
-与 PRIVACY.md 的披露一致即可。
+两个商店用**同一个 zip**。0.4.2 相对商店里的 0.4.1 全部是缺陷修复与体验打磨：
+概览生成期间顺句/翻译结果不再被覆盖回滚；首句字幕之前的笔记不再错取视频结尾
+内容；问答生成中可随时点「停止」取消；修复问答偶发误报「未找到」的检索缺陷；
+消除非编辑区域闪烁的文本插入符。
 
 ---
 
-## 0.4.0 提交包
+## 0.4.2 提交包
 
 先把本仓库推到 GitHub，再点提交：商店里的隐私政策 URL 指向 GitHub 上的 `PRIVACY.md`，不能比安装包旧。
 
 ### 安装包
 
 ```text
-dist/digest-for-bilibili-0.4.1.zip
+dist/digest-for-bilibili-0.4.2.zip
 ```
 
-Chrome 开发者后台与 Edge 合作伙伴中心上传同一份。若 0.3.0 审核被拒，本次提交的基线按上面「变更摘要草稿」的前提合并重写。
+Chrome 开发者后台与 Edge 合作伙伴中心上传同一份。本版为缺陷修复，不新增功能与权限。
 
 ### 商店截图（1280×800）
 
-Chrome 按这个顺序替换（第 3 张为本版新增的问答图）：
-
-```text
-store/screenshots/01-transcript.png
-store/screenshots/02-overview.png
-store/screenshots/03-qa.png
-store/screenshots/04-explain.png
-store/screenshots/05-notes-search.png
-```
-
-Edge 在上面五张之后追加第 6 张：
-
-```text
-store/screenshots/06-learning-export.png
-```
-
-「笔记 AI 优化」截图自本版起退出商店图集。Edge 扩展徽标仍用 `store/logo-300.png`，图标仍用 `icons/icon128.png`。
+不用改。仍用现有六张（`store/screenshots/01`–`06`），Edge 徽标仍用 `store/logo-300.png`，图标仍用 `icons/icon128.png`。
 
 ### 后台里要改 / 不用改
 
 | 字段 | 操作 |
 | --- | --- |
 | 安装包 | 上传上面的 zip |
-| 详细说明 | 整段替换为下面「详细说明」（已含问答功能与问题文本的隐私描述） |
-| 截图 | Chrome 换前五张（新增问答图）；Edge 六张全部替换 |
+| 详细说明 | 只在「版本历史」清单顶部加 0.4.2 一行（已写进下面「详细说明」） |
+| 版本说明 | 贴下面「给审核员的变更摘要」 |
+| 截图 | 不用改 |
 | 名称、简短说明、类别、单一用途 | 不用改 |
 | 权限理由 | 不用改（权限集合没变） |
-| 数据披露 | 不用改（仍是 API 密钥 + 网站内容；IndexedDB 属本地存储范畴） |
+| 数据披露 | 不用改（仍是 API 密钥 + 网站内容） |
 | 隐私政策 URL | 不用改，但确认 GitHub 上已是最新 `PRIVACY.md` |
 | 远程代码 | 仍选「否」 |
 | 认证说明 | 不用填。前几个版本都未向审核员提供临时密钥，本次同样不提供 |
@@ -78,17 +51,15 @@ store/screenshots/06-learning-export.png
 ### 给审核员的变更摘要（可选，有「版本说明」栏再贴）
 
 ```text
-0.4.0 新增视频问答与若干改进，Chrome 与 Edge 使用同一份 MV3 安装包。
+0.4.2 为缺陷修复版本，Chrome 与 Edge 使用同一份 MV3 安装包。
 
-- 新增「问答」标签页：针对当前视频提问，AI 先在字幕内检索相关内容再回答；
-  关键结论附带可点击的时间戳引用；引用必须能在字幕原文中找到，
-  找不到依据时如实回答「未找到」，不编造
-- 字幕搜索与笔记搜索的命中关键词高亮显示
-- 笔记、概览与字幕缓存改用浏览器内置数据库（IndexedDB）存储，
-  不再受旧本地存储的容量上限约束；升级自动迁移，无需手动操作
-- 内部模块化重构，用户界面与操作流程不变
+- 修复章节概览生成期间，已完成的顺句与翻译结果可能被回滚覆盖的缺陷
+- 修复视频开头（首句字幕之前）记录笔记时，笔记内容错取视频结尾的缺陷
+- 问答生成中可随时点「停止」取消本次请求
+- 修复长视频问答偶发误报「未找到」的检索缺陷
+- 消除非编辑区域闪烁的文本插入符
 
-权限、主机范围和数据类别与上一版本相同。
+权限、主机范围和数据类别与 0.4.1 相同。
 ```
 
 ---
@@ -218,6 +189,7 @@ Digest for Bilibili 在 B 站播放页旁边打开一个侧边栏，把当前视
 反馈
 Bug 与建议请提交到 https://github.com/biuworks/bilibili-digest/issues
 
+版本 0.4.2 — 问答生成中可随时停止；修复概览生成期间顺句/翻译结果被覆盖、视频开头笔记取错内容、问答偶发误报未找到、非编辑区域出现闪烁光标等缺陷
 版本 0.4.0 — 新增「问答」：针对当前视频提问，回答附可点击的时间戳引用，无依据时如实说明；搜索命中关键词高亮；本地存储升级为浏览器数据库，容量不再受限，升级自动迁移
 版本 0.3.0 — 修复扩展后台无响应导致取不到字幕的缺陷；笔记支持跨视频搜索与 JSON 备份恢复；可导出完整学习稿；概览失败分块可单独补生成；界面字号可自定义
 版本 0.2.0 — 侧边栏在同一窗口内保持打开；顺句、翻译、概览和笔记优化可停止；笔记可二次优化并导出 Markdown；笔记不再在 100 条时静默丢弃
@@ -329,7 +301,7 @@ https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
 - [ ] 已 `git push`，GitHub 上的 `PRIVACY.md` 与本次安装包一致。
 - [ ] 更新 `manifest.json` 版本号和本文件的发布状态。
 - [ ] `npm test` 全部通过。
-- [ ] `npm run package` 得到 `dist/digest-for-bilibili-0.4.1.zip`。
+- [ ] `npm run package` 得到 `dist/digest-for-bilibili-0.4.2.zip`。
 - [ ] ZIP 顶层直接包含 `manifest.json`。
 - [ ] ZIP 不包含测试、截图、README、隐私政策或本文件。
 - [ ] 同一个解压包分别在 Chrome 与 Edge 中旁加载验证。
@@ -344,8 +316,8 @@ https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
 - [ ] 每项权限理由均已填写。
 - [ ] 数据披露与 `PRIVACY.md` 一致。
 - [ ] 远程代码选择“否”。
-- [ ] 升级路径真机验证：0.3.0 造好笔记 / 概览 / 字幕缓存后覆盖安装
-      0.4.0，三类数据原样可用（IndexedDB 自动迁移，无需手动操作）。
+- [ ] 升级路径真机验证：0.4.1 造好笔记 / 概览 / 字幕缓存后覆盖安装
+      0.4.2，三类数据原样可用（IndexedDB 自动迁移，无需手动操作）。
 - [ ] 问答：正常问题带可点击时间戳引用；无关问题如实回答未找到；
       生成中可停止；历史按视频与分 P 隔离。
 - [ ] 长视频（30 分钟以上）问答：记录实际耗时与模型费用各一次，
