@@ -261,8 +261,12 @@ function switchTab(tab) {
 function parseBvid(url) {
   const text = String(url || "");
   if (!text.includes("bilibili.com")) return null;
-  const match = text.match(/BV[0-9A-Za-z]{10}/);
-  return match ? match[0] : null;
+  // 只认视频页/合集页路径或显式的 ?bvid= 参数：搜索页链接里、甚至任意外站
+  // URL 中只要出现 BV 字样就算视频，会让面板加载一个用户根本没在看的东西。
+  const match =
+    text.match(/bilibili\.com\/(?:video|list)\/(?:[^/?]*\/)?(BV[0-9A-Za-z]{10})/) ||
+    text.match(/[?&]bvid=(BV[0-9A-Za-z]{10})/);
+  return match ? match[1] : null;
 }
 
 function parsePage(url) {
@@ -790,9 +794,13 @@ function segmentCountText() {
 }
 
 // 借分段计数那一行显示临时提示，几秒后还原。
+let segmentNoticeTimer = null;
 function showSegmentNotice(message) {
   el("segmentCount").textContent = message;
-  setTimeout(() => {
+  // 连续两条通知（如部分失败紧跟着取消提示）时，前一条的定时器不能
+  // 把后一条的文案中途截走。
+  clearTimeout(segmentNoticeTimer);
+  segmentNoticeTimer = setTimeout(() => {
     el("segmentCount").textContent = segmentCountText();
   }, 5000);
 }
@@ -1089,7 +1097,7 @@ async function analyze({ force = false, retryFailed = false } = {}) {
   if (!taskId) {
     el("overviewEmpty").querySelector(".state-title").textContent = "概览正在生成";
     el("overviewEmpty").querySelector(".state-text").textContent =
-      "同一视频已经有一个概览任务在运行。";
+      "已经有一个概览任务在运行，可等它完成或取消后再试。";
     return;
   }
   state.aiTasks.analysis = { id: taskId, bvid: requestedBvid, page: requestedPage };
@@ -1229,17 +1237,25 @@ function renderQuoteCard(quote, { nested = false } = {}) {
     if (saveBtn.disabled) return;
     saveBtn.disabled = true;
     saveBtn.textContent = "保存中…";
-    // 金句已经是模型整理过的文本，直接落库，不必再润色一遍。
-    const result = await sendToBackground({
-      action: "saveNote",
-      bvid: state.bvid,
-      page: state.page,
-      timestamp: quote.timestampSeconds,
-      text: quote.quote,
-    });
+    let result = null;
+    try {
+      result = await sendToBackground({
+        action: "saveNote",
+        bvid: state.bvid,
+        page: state.page,
+        timestamp: quote.timestampSeconds,
+        text: quote.quote,
+      });
+    } catch (error) {
+      // 后台不可达（SW 重启窗口）：按钮要能恢复，不能永远卡在「保存中…」。
+      saveBtn.disabled = false;
+      saveBtn.textContent = "存为笔记";
+      showToast(error?.message || "保存失败，请重试。");
+      return;
+    }
     const saved = Boolean(result?.success);
     if (saved) videoNoteSeconds.add(seconds);
-    saveBtn.textContent = saved ? "已保存" : "保存失败";
+    saveBtn.textContent = saved ? (result.duplicate ? "该时刻已有笔记" : "已保存") : "保存失败";
     setTimeout(() => {
       if (!videoNoteSeconds.has(seconds)) {
         saveBtn.disabled = false;
@@ -1254,6 +1270,11 @@ function renderQuoteCard(quote, { nested = false } = {}) {
 }
 
 function renderAnalysis(analysis, fromCache) {
+  // 读缓存路径不再做结构校验：旧版本或外来源的缓存条目可能缺数组字段，
+  // 在这里兜住，别让面板卡死在 loading。
+  analysis = analysis && typeof analysis === "object" ? analysis : {};
+  if (!Array.isArray(analysis.chapters)) analysis.chapters = [];
+  if (!Array.isArray(analysis.keyQuotes)) analysis.keyQuotes = [];
   const failures = Array.isArray(state.analysisFailures) ? state.analysisFailures : [];
   const parts = [
     `${analysis.chapters.length} 章节`,
@@ -1321,14 +1342,20 @@ async function loadNotes() {
     renderNotes([], { noVideo: true });
     return;
   }
+  const scopeVideo = state.notesScope === "video";
+  const requestedBvid = scopeVideo ? state.bvid : null;
+  const requestedPage = scopeVideo ? state.page : null;
   const result = await sendToBackground(
     {
       action: "getNotes",
-      bvid: state.notesScope === "video" ? state.bvid : null,
-      page: state.notesScope === "video" ? state.page : null,
+      bvid: requestedBvid,
+      page: requestedPage,
     },
     { idempotent: true },
   );
+  // 迟到的响应不渲染：scope 或视频切走后，旧数据会盖住新状态。
+  if ((state.notesScope === "video") !== scopeVideo) return;
+  if (scopeVideo && (state.bvid !== requestedBvid || state.page !== requestedPage)) return;
   renderNotes(result?.notes || []);
 }
 
@@ -1430,8 +1457,26 @@ function renderNotes(notes, { noVideo = false } = {}) {
   }
 
   const listNode = el("notesList");
+  // 重建前接住打开中的编辑器和没保存的草稿：noteSaved/noteUpdated 广播
+  // 触发的全量重建，不能把用户正在输入的内容冲掉。
+  const openEditor = listNode.querySelector(".note-editor:not([hidden])");
+  const openDraft = openEditor
+    ? {
+        noteId: openEditor.closest(".note")?.dataset.noteId || "",
+        value: openEditor.querySelector("textarea")?.value ?? "",
+      }
+    : null;
   listNode.textContent = "";
   for (const note of filtered) listNode.appendChild(renderNoteCard(note));
+  if (openDraft?.noteId && openDraft.value.trim()) {
+    const card = listNode.querySelector(`.note[data-note-id="${openDraft.noteId}"]`);
+    const editButton = card?.querySelector('button[title="编辑笔记正文"]');
+    if (editButton) {
+      editButton.click(); // 走正常打开路径，再把值覆盖回未保存的草稿
+      const input = card.querySelector(".note-editor-input");
+      if (input) input.value = openDraft.value;
+    }
+  }
 }
 
 function applyNotesSearch(query) {
@@ -1455,6 +1500,9 @@ const QA_FALLBACK_HINT = "未能从字幕中找到足够的依据";
 let qaAsking = false;
 // 进行中问答的任务号：停止按钮靠它发 cancelAiTask；startAiTask 成功前为 null。
 let qaActiveTaskId = null;
+// 提问时的视频：回答渲染与历史加载都以此为票据，防止切视频后串台。
+let qaAskBvid = null;
+let qaAskPage = 1;
 let toastTimer = null;
 
 function showToast(message) {
@@ -1468,17 +1516,26 @@ function showToast(message) {
 }
 
 async function loadQaHistory() {
-  // 进行中的占位卡不能被迟到的历史加载冲掉。
-  if (qaAsking) return;
+  // 进行中的占位卡不能被同视频的迟到历史加载冲掉。
+  if (qaAsking) {
+    // 但提问期间切到了别的视频：旧视频的占位卡和历史不能留在新视图里。
+    // 清空交给完成时的视频票据——回答只入历史，不会渲染到新视频名下。
+    if (state.bvid !== qaAskBvid || state.page !== qaAskPage) renderQaList([]);
+    return;
+  }
   if (!state.bvid) {
     renderQaList([]);
     return;
   }
+  const requestedBvid = state.bvid;
+  const requestedPage = state.page;
   const result = await sendToBackground({
     action: "getQaHistory",
-    bvid: state.bvid,
-    page: state.page,
+    bvid: requestedBvid,
+    page: requestedPage,
   });
+  // 迟到的响应：期间已切走就丢弃，不覆盖当前视频的列表。
+  if (state.bvid !== requestedBvid || state.page !== requestedPage) return;
   renderQaList(result?.entries || []);
 }
 
@@ -1523,6 +1580,8 @@ async function submitQuestion() {
   const pendingId = `${taskId}_pending`;
   el("qaInput").value = "";
   setQaAsking(true);
+  qaAskBvid = state.bvid;
+  qaAskPage = state.page;
   hideQaHint();
   renderQaListPrepend({
     id: pendingId,
@@ -1540,7 +1599,21 @@ async function submitQuestion() {
   };
 
   try {
-    await sendToBackground({ action: "startAiTask", taskId, kind: "qa" });
+    const started = await sendToBackground({
+      action: "startAiTask",
+      taskId,
+      kind: "qa",
+      bvid: state.bvid,
+      page: state.page,
+    });
+    if (!started?.success) {
+      // 同一视频已有问答在跑（双窗口或快速重复提问）：后台不会注册这个
+      // 任务，继续 askQuestion 只会撞上误导性的 TASK_NOT_FOUND。
+      dropPending();
+      el("qaInput").value = question;
+      showQaHint(started?.message || "问答启动失败，请重试。");
+      return;
+    }
     // 注册成功后才允许取消：startAiTask 没回前任务还不存在于后台。
     qaActiveTaskId = taskId;
     const result = await sendToBackground({
@@ -1562,11 +1635,16 @@ async function submitQuestion() {
       return;
     }
 
-    // 真卡换占位卡。
-    renderQaList([
-      result.entry,
-      ...currentQaEntries().filter((item) => item.id !== pendingId),
-    ]);
+    // 真卡换占位卡——仅当还停在提问时的视频；切走了就只入历史，
+    // 不把上一个视频的回答渲染到当前视频名下。
+    if (state.bvid === qaAskBvid && state.page === qaAskPage) {
+      renderQaList([
+        result.entry,
+        ...currentQaEntries().filter((item) => item.id !== pendingId),
+      ]);
+    } else {
+      dropPending();
+    }
   } catch (error) {
     dropPending();
     el("qaInput").value = question;
@@ -1750,6 +1828,8 @@ function appendHighlighted(parent, text, query) {
 function renderNoteCard(note) {
   const card = document.createElement("div");
   card.className = "note";
+  // 供全量重建后恢复打开中的编辑器定位用。
+  card.dataset.noteId = note.id;
 
   // 状态提示（视频已下架之类）常驻在卡片底部，平时藏着。
   const notice = document.createElement("p");
@@ -2075,10 +2155,16 @@ async function playNote(note, notice) {
   }
 
   setNoteNotice(notice, "正在确认视频是否还在…", "muted");
-  const result = await sendToBackground(
-    { action: "checkVideoAvailable", bvid: note.bvid },
-    { idempotent: true },
-  );
+  let result = null;
+  try {
+    result = await sendToBackground(
+      { action: "checkVideoAvailable", bvid: note.bvid },
+      { idempotent: true },
+    );
+  } catch (error) {
+    setNoteNotice(notice, "暂时无法确认视频状态，请稍后重试。", "muted");
+    return;
+  }
 
   if (result?.available === false) {
     setNoteNotice(notice, result.message || "视频已下架，无法查看原视频。");
@@ -2222,12 +2308,18 @@ async function explainSelection() {
   explainAnchor = pendingRange;
   positionExplainPopover();
 
-  const result = await sendToBackground({
-    action: "explainSelection",
-    selectedText: selected,
-    transcriptContext: selectionContext(selected),
-    videoTitle: state.data?.videoInfo?.title || "",
-  });
+  let result = null;
+  try {
+    result = await sendToBackground({
+      action: "explainSelection",
+      selectedText: selected,
+      transcriptContext: selectionContext(selected),
+      videoTitle: state.data?.videoInfo?.title || "",
+    });
+  } catch (error) {
+    // 后台不可达也要把浮层文案落定，别让它永远停在「正在解释…」。
+    result = { success: false, message: error?.message || "解释失败，请重试。" };
+  }
 
   el("explainBody").textContent = result?.success
     ? result.explanation

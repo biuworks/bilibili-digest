@@ -64,6 +64,9 @@ function createElement(tag = "div") {
     contains(node) {
       return this === node || this.children.some((child) => child?.contains?.(node));
     },
+    closest() {
+      return null;
+    },
     getBoundingClientRect() {
       return { left: 0, top: 0, right: 500, bottom: 500, width: 500, height: 500 };
     },
