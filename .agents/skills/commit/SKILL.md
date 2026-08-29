@@ -1,6 +1,6 @@
 ---
 name: commit
-description: 按本仓库的中文 Conventional Commits 规范创建 git 提交。只要用户要求提交、commit、把改动入库、或让你生成/润色提交信息，就使用本 skill；涵盖类型选择、中文主题行写法、body 规则、提交前检查，以及本仓库特有约定（不自动 push、钩子同步 live、release 流程）。
+description: 用户要求提交、commit、把改动入库，或让你生成/润色提交信息时使用。产出 type 英文 + 中文主题行的 Conventional Commits 提交，并执行本仓库约定：运行时文件先跑 npm test、不自动 push、发版用 release: 并同步三处版本号。
 ---
 
 # 提交规范（中文 Conventional Commits）
