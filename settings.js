@@ -195,7 +195,10 @@ var BILI_SETTINGS = (() => {
 
   const presetById = (id) => PRESETS.find((preset) => preset.id === id) || null;
 
-  const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "0.0.0.0"]);
+  // Chrome 的 match pattern 不支持 IPv6 字面量，0.0.0.0 也不是可申请的
+  // 授权来源——放行只会让用户在「申请权限失败」上走进死胡同（Ollama 在
+  // IPv6 机器上的横幅就打印 [::1]）。回环一律引导走 localhost / 127.0.0.1。
+  const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
 
   // 密钥会随请求发到这个地址，所以这里也是安全边界：明文 http 只对本机放行
   //（本地推理服务不配证书），其余一律要求 https。

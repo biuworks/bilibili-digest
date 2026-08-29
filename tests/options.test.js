@@ -66,6 +66,8 @@ async function createContext() {
     console,
     setTimeout: () => 1,
     clearTimeout: () => {},
+    // fetchWithTimeout 依赖 AbortController；浏览器全局，vm 里要显式给。
+    AbortController,
     document: {
       getElementById: byId,
       createElement: (tag) => {

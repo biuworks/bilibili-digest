@@ -26,6 +26,19 @@ const modelOptions = document.getElementById("modelOptions");
 const statusEl = document.getElementById("status");
 
 let statusTimer = null;
+let backupStatusTimer = null;
+
+// 拉取模型列表 / 测试连接直连用户配置的端点，不走后台的超时与重试；
+// 端点挂起时至少要能自己停下来，不能让状态永远停在「正在…」。
+async function fetchWithTimeout(url, init, timeoutMs = 30_000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function showStatus(text, { sticky = false } = {}) {
   statusEl.textContent = text;
@@ -260,7 +273,7 @@ async function fetchModels() {
   showStatus("正在获取模型列表…", { sticky: true });
   try {
     const request = BILI_AI_PROVIDER.buildModelsRequest(settings);
-    const response = await fetch(request.url, { headers: request.headers });
+    const response = await fetchWithTimeout(request.url, { headers: request.headers });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       showStatus(
@@ -282,7 +295,12 @@ async function fetchModels() {
     modelsHint.textContent = `已获取 ${models.length} 个模型，可直接选择或切换为手动填写。`;
     showStatus("模型列表已更新");
   } catch (error) {
-    showStatus(`获取失败：${error.message}。请检查接口地址与网络连接。`, { sticky: true });
+    showStatus(
+      error?.name === "AbortError"
+        ? "获取超时（30 秒），请检查服务地址或稍后再试。"
+        : `获取失败：${error.message}。请检查接口地址与网络连接。`,
+      { sticky: true },
+    );
   }
 }
 
@@ -305,7 +323,7 @@ async function testConnection() {
       messages: [{ role: "user", content: "回复两个字：可用" }],
       maxTokens: 32,
     });
-    const response = await fetch(request.url, {
+    const response = await fetchWithTimeout(request.url, {
       method: "POST",
       headers: request.headers,
       body: JSON.stringify(request.body),
@@ -325,16 +343,23 @@ async function testConnection() {
       { sticky: true },
     );
   } catch (error) {
-    showStatus(`测试失败：${error.message}。请检查接口地址、协议与网络连接。`, { sticky: true });
+    showStatus(
+      error?.name === "AbortError"
+        ? "测试超时（30 秒），请检查服务地址或稍后再试。"
+        : `测试失败：${error.message}。请检查接口地址、协议与网络连接。`,
+      { sticky: true },
+    );
   }
 }
 
 function showBackupStatus(text, { sticky = false } = {}) {
   const node = document.getElementById("backupStatus");
   node.textContent = text;
-  clearTimeout(statusTimer);
+  // 与主状态区各用各的计时器：共用一个会互相清掉对方的消息，留下永远
+  // 不消失的提示。
+  clearTimeout(backupStatusTimer);
   if (!sticky) {
-    statusTimer = setTimeout(() => {
+    backupStatusTimer = setTimeout(() => {
       node.textContent = "";
     }, 4000);
   }
@@ -434,18 +459,20 @@ for (const input of [fields.baseUrl, fields.apiKey, fields.model]) {
   });
 }
 
-async function saveUiFontScale() {
+async function saveUiFontScale(writeBack = true) {
   const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
   const settings = BILI_SETTINGS.normalize({
     ...stored[BILI_SETTINGS.STORAGE_KEY],
     uiFontScale: fields.uiFontScale.value,
   });
-  fields.uiFontScale.value = settings.uiFontScale;
+  // 回写输入框只发生在 change（失焦/回车）：input 事件里每敲一键就钳制
+  // 回写，会把正在输入的「1」变成 80，用户永远输不进 120。
+  if (writeBack) fields.uiFontScale.value = settings.uiFontScale;
   await chrome.storage.local.set({ [BILI_SETTINGS.STORAGE_KEY]: settings });
   BILI_SETTINGS.applyUiFontScale(settings.uiFontScale);
 }
 
-fields.uiFontScale.addEventListener("change", saveUiFontScale);
-fields.uiFontScale.addEventListener("input", saveUiFontScale);
+fields.uiFontScale.addEventListener("change", () => saveUiFontScale(true));
+fields.uiFontScale.addEventListener("input", () => saveUiFontScale(false));
 
 load();

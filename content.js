@@ -295,7 +295,8 @@
         timestamp: Math.floor(video.currentTime || 0),
       });
       if (result?.success) {
-        flashNoteButton("已保存");
+        // 去重命中时数据并没有存进去，如实说，别假装保存成功。
+        flashNoteButton(result.duplicate ? "该时刻已有笔记" : "已保存");
       } else if (result?.error === "STORAGE_FULL") {
         const button = document.getElementById(NOTE_BUTTON_ID);
         if (button) button.title = result.message;
