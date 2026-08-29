@@ -29,6 +29,18 @@ FILES=(
 DIRS=(lib prompts _locales)
 
 version=$(node -p "require('./manifest.json').version")
+# 升级测试流水线（~/ext-upgrade-test/sync-040.sh）会传 PACKAGE_VERSION_OVERRIDE，
+# 在发布版本末位追加构建号（0.4.1 → 0.4.1.N）：仓库与商店的版本保持干净，
+# 浏览器扩展页里却能看出每次刷新有没有吃到新构建。
+override="${PACKAGE_VERSION_OVERRIDE:-}"
+if [ -n "$override" ]; then
+  if ! printf '%s' "$override" | grep -Eq '^[0-9]+(\.[0-9]+){1,3}$'; then
+    echo "PACKAGE_VERSION_OVERRIDE 不是合法版本号：$override" >&2
+    exit 1
+  fi
+  version="$override"
+fi
+
 out="dist/digest-for-bilibili-${version}.zip"
 
 stage=$(mktemp -d)
@@ -44,6 +56,16 @@ for dir in "${DIRS[@]}"; do
   [ -d "$dir" ] || { echo "缺少目录：$dir" >&2; exit 1; }
   cp -r "$dir" "$stage/$dir"
 done
+
+# 版本号覆盖只改暂存副本，仓库里的 manifest.json 不动。
+if [ -n "$override" ]; then
+  node -e '
+    const fs = require("fs");
+    const manifest = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    manifest.version = process.argv[2];
+    fs.writeFileSync(process.argv[1], JSON.stringify(manifest, null, 2) + "\n");
+  ' "$stage/manifest.json" "$override"
+fi
 
 # manifest 引用了却没进包的文件，会让浏览器直接拒绝加载整个扩展，
 # 而商店的报错通常只指向清单本身，很难定位。
