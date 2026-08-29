@@ -34,6 +34,34 @@ function makeService({ reply } = {}) {
   });
 }
 
+test("问答历史落库失败时，已生成的回答照常返回并如实标注", async () => {
+  const service = QA_SERVICE.createQaService({
+    cache: { load: async () => null },
+    dataReady: async () => {},
+    ensureTranscript: async () => ({
+      success: true,
+      transcript: TRANSCRIPT_FIXTURE,
+      segments: SEGMENTS_FIXTURE,
+      videoInfo: { title: "标题", duration: 60 },
+    }),
+    learningRepository: () => ({ find: async () => null }),
+    getSettings: async () => ({}),
+    loadPromptSection: async (file, heading, vars) => vars.transcriptText ?? "p",
+    repository: () => ({
+      save: async () => {
+        throw new Error("磁盘满");
+      },
+      all: async () => [],
+    }),
+    requestAiCompletion: async () => ({ text: JSON.stringify({ answer: "结论 [0:00]" }) }),
+    aiErrorResponse: (error) => ({ success: false, error: error.message }),
+  });
+
+  const result = await service.askQuestion({ bvid: "BV1xx411c7mD", page: 1, question: "结论？" });
+  assert.equal(result.success, true, "落库失败不该吞掉已经生成、已经花了钱的回答");
+  assert.equal(result.historySaved, false);
+});
+
 test("回答原样透传，不做二次加工", async () => {
   let captured = false;
   const idb = createMemoryIndexedDb();

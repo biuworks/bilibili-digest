@@ -302,6 +302,76 @@ test("学习稿没有章节、笔记和字幕时导出为空", () => {
   assert.equal(STORE.learningAsMarkdown({ notes: [], analysis: { chapters: [] } }), "");
 });
 
+test("多行文本嵌进行内结构时，续行必须留在原结构里", () => {
+  const markdown = STORE.learningAsMarkdown({
+    title: "第一行\n第二行",
+    bvid: "BV1xx411c7mD",
+    analysis: {
+      chapters: [
+        { timestamp: "0:10", timestampSeconds: 10, title: "章", summary: "摘" },
+      ],
+      keyQuotes: [
+        { timestamp: "0:20", timestampSeconds: 20, quote: "第一句\n第二句" },
+        // 时间戳落在第一章之前的金句归为 orphan，走散列表的 `- ` 渲染
+        { timestamp: "0:05", timestampSeconds: 5, quote: "孤儿一句\n孤儿二句" },
+      ],
+    },
+    notes: [],
+  });
+  const lines = markdown.split("\n");
+  const titleLine = lines.find((line) => line.startsWith("title:"));
+  assert.match(titleLine, /\\n/, "YAML 双引号标量里的换行必须转义，否则重解析折叠成空格");
+
+  const chapterQuote = lines.findIndex((line) => line.startsWith("> ") && line.includes("第一句"));
+  assert.ok(chapterQuote >= 0);
+  assert.match(lines[chapterQuote + 1], /^> /, "引用块的续行要带 > 前缀");
+
+  const looseQuote = lines.findIndex((line) => line.startsWith("- ") && line.includes("孤儿一句"));
+  assert.ok(looseQuote >= 0);
+  assert.match(lines[looseQuote + 1], /^  /, "列表项的续行要缩进两个空格");
+});
+
+test("备份合并：updatedAt 平局保留本地，缺 learningId 的概览补 id 后可写入", () => {
+  const note = (id, updatedAt, text) => ({
+    id,
+    bvid: "BV1",
+    page: 1,
+    timestamp: 0,
+    timestampSeconds: 0,
+    timestampedUrl: "https://www.bilibili.com/video/BV1?t=0",
+    text,
+    createdAt: updatedAt,
+    updatedAt,
+  });
+  const parsed = STORE.parseBackup({
+    kind: "bilibili-digest-backup",
+    schemaVersion: 2,
+    exportedAt: 0,
+    notes: [note("n1", 100, "备份版")],
+    learning: [],
+  });
+  const merged = STORE.mergeBackup([note("n1", 100, "本地改过")], [], parsed.backup);
+  assert.equal(
+    merged.notes.find((item) => item.id === "n1").text,
+    "本地改过",
+    "平局不能让备份反向覆盖本地",
+  );
+
+  const parsed2 = STORE.parseBackup({
+    kind: "bilibili-digest-backup",
+    schemaVersion: 2,
+    exportedAt: 0,
+    notes: [],
+    learning: [{ bvid: "BV1", page: 1, analysis: { chapters: [], keyQuotes: [] }, updatedAt: 5 }],
+  });
+  const merged2 = STORE.mergeBackup([], [], parsed2.backup);
+  assert.equal(merged2.learningAdded, 1);
+  assert.ok(
+    STORE.isValidLearningRecord(merged2.learning[0]),
+    "派生出 id 就要补进记录，否则统计虚报、写入被静默过滤",
+  );
+});
+
 test("学习稿带 YAML、章节内金句、笔记，不含 AI 草稿", () => {
   const markdown = STORE.learningAsMarkdown({
     title: "如何听懂",
