@@ -1453,6 +1453,8 @@ function replaceNoteState(target, source) {
 
 const QA_FALLBACK_HINT = "未能从字幕中找到足够的依据";
 let qaAsking = false;
+// 进行中问答的任务号：停止按钮靠它发 cancelAiTask；startAiTask 成功前为 null。
+let qaActiveTaskId = null;
 let toastTimer = null;
 
 function showToast(message) {
@@ -1487,8 +1489,26 @@ function showQaHint(message) {
 
 function setQaAsking(asking) {
   qaAsking = asking;
-  el("qaAskBtn").disabled = asking;
+  // 进行中不置灰：按钮此时就是「停止」，必须可点。
   el("qaAskBtn").textContent = asking ? "停止" : "提问";
+}
+
+// 只服务按钮点击；Enter 路径在 submitQuestion 里被 qaAsking 挡掉，
+// 不承担取消职责，避免输入时误触。
+function cancelActiveQa() {
+  if (!qaActiveTaskId) return;
+  sendToBackground({ action: "cancelAiTask", taskId: qaActiveTaskId }).catch(
+    () => {},
+  );
+}
+
+// 按钮身兼两职：空闲时是「提问」，生成中是「停止」。
+function onQaButtonClick() {
+  if (qaAsking) {
+    cancelActiveQa();
+    return;
+  }
+  submitQuestion();
 }
 
 async function submitQuestion() {
@@ -1521,6 +1541,8 @@ async function submitQuestion() {
 
   try {
     await sendToBackground({ action: "startAiTask", taskId, kind: "qa" });
+    // 注册成功后才允许取消：startAiTask 没回前任务还不存在于后台。
+    qaActiveTaskId = taskId;
     const result = await sendToBackground({
       action: "askQuestion",
       taskId,
@@ -1551,7 +1573,7 @@ async function submitQuestion() {
     showQaHint(error?.message || "问答失败，请重试。");
   } finally {
     setQaAsking(false);
-    delete el("qaAskBtn").dataset.taskId;
+    qaActiveTaskId = null;
     updateQaEmptyState();
   }
 }
@@ -2432,7 +2454,8 @@ function setupEventListeners() {
     button.addEventListener("click", () => switchTab(button.dataset.tab));
   }
 
-  el("qaAskBtn").addEventListener("click", submitQuestion);
+  // 按钮身兼两职：空闲时是「提问」，生成中是「停止」。Enter 不走这里。
+  el("qaAskBtn").addEventListener("click", onQaButtonClick);
   el("qaInput").addEventListener("keydown", (event) => {
     if (event.key === "Enter" && !qaAsking) submitQuestion();
   });

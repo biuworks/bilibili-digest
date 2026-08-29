@@ -759,9 +759,11 @@ async function handleSegmentRewrite(
     }
 
     // 这些批次是并发跑的，读—改—写要走串行队列，否则会互相覆盖。
+    // current 必须赢过任务开始时的快照，否则批次期间别处写入的
+    // polished/translated/analysis 会被旧快照回滚（见 analysis-service 同款注释）。
     const saved = await updateCache(bvid, pageNumber, (current) => ({
-      ...current,
       ...persistable(transcript),
+      ...current,
       [task.cacheKey]: { ...(current[task.cacheKey] || {}), ...accepted },
     }));
 

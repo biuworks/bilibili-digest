@@ -62,6 +62,29 @@ test("长字幕打分筛选，命中块的相邻块一并带上且按时间排�
   assert.deepEqual(result.timeRange, { min: 120, max: 420 });
 });
 
+test("相邻命中块的后邻居也会带上：跨块话题的续块不丢", () => {
+  const chunks = Array.from({ length: 6 }, (_, index) =>
+    chunk(index, index * 120, `块${index} ${"字".repeat(2200)}`),
+  );
+  // 话题横跨块边界：index=1、2 相邻都命中。若按「前一块已选」抄近路
+  // 跳过 +1 侧，第 3 块永远进不了上下文，答案引用会过不了区间闸门。
+  chunks[1].text += " 反向传播的核心推导";
+  chunks[2].text += " 反向传播的收敛性分析";
+
+  const result = QA.selectContext({
+    chunks,
+    question: "反向传播",
+    budgetChars: 12_000,
+  });
+
+  assert.equal(result.mode, "selected");
+  assert.deepEqual(
+    result.chunks.map((c) => c.index),
+    [0, 1, 2, 3],
+    "命中 1、2，两侧邻居 0 与 3 全部带上",
+  );
+});
+
 test("预算超限时从尾部裁剪，至少保留一块", async () => {
   const chunks = [
     chunk(0, 0, "命中关键词 " + "字".repeat(5000)),

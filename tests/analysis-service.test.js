@@ -18,7 +18,7 @@ function makeSegments() {
   ];
 }
 
-function makeHarness({ segments = makeSegments(), cached = null } = {}) {
+function makeHarness({ segments = makeSegments(), cached = null, aiHook = null } = {}) {
   const idb = createMemoryIndexedDb();
   const rows = new Map();
   if (cached) rows.set(`${BVID}:p1`, structuredClone(cached));
@@ -75,6 +75,8 @@ function makeHarness({ segments = makeSegments(), cached = null } = {}) {
       return `${file}/${heading}\n${variables?.transcriptText ?? ""}`;
     },
     requestAiCompletion: async ({ messages }) => {
+      // 供用例在「生成期间」干预 live 缓存，模拟并发的顺句/翻译落库。
+      if (aiHook) await aiHook(cache);
       if (failMode === "all") throw Object.assign(new Error("密钥坏了"), { code: "NO_AI_CONFIG" });
       const user = messages.find((m) => m.role === "user")?.content || "";
       if (failMode === "marker" && user.includes("FAIL标记")) {
@@ -171,6 +173,31 @@ test("两块全部成功：落缓存与学习资料，失败数为零", async ()
   assert.equal(stored.analysis.chapters.length >= 1, true);
   const record = await h.learningRepo.find(`${BVID}:p1`);
   assert.ok(record.analysis);
+});
+
+test("概览落库不回滚生成期间新写入的顺句缓存", async () => {
+  // 任务开始时的快照只顺到 s0；生成期间顺句批次把 s1 也写进了 live 缓存。
+  // 旧展开顺序（current 在前）会用快照里的旧 polished 盖掉新条目。
+  const h = makeHarness({
+    cached: {
+      transcript: [{ start: 0, text: "x" }],
+      segments: makeSegments(),
+      videoInfo: { title: "测试视频", owner: "UP 主", duration: 600 },
+      polished: { s0: "已顺的 s0" },
+    },
+    aiHook: (cache) => {
+      const row = cache.rows.get(`${BVID}:p1`);
+      row.polished = { s0: "已顺的 s0", s1: "新顺的 s1" };
+    },
+  });
+
+  const result = await h.service.analyzeTranscript(BVID, { forceRefresh: true });
+
+  assert.equal(result.success, true);
+  const stored = h.cache.rows.get(`${BVID}:p1`);
+  assert.equal(stored.polished.s1, "新顺的 s1", "生成期间的新顺句不被旧快照回滚");
+  assert.equal(stored.polished.s0, "已顺的 s0");
+  assert.ok(stored.analysis.chapters.length > 0, "概览本身正常写入");
 });
 
 test("单块持续失败仍出结果，并如实记录失败区间", async () => {

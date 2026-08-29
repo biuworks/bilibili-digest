@@ -210,7 +210,7 @@ function createContext({
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, loadTranscript, switchSubtitleLang, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground, submitQuestion, switchTab, appendAnswerText };`,
+    `${source}\n;globalThis.__api = { state, loadTranscript, switchSubtitleLang, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground, submitQuestion, onQaButtonClick, switchTab, appendAnswerText };`,
     context,
   );
 
@@ -1752,6 +1752,60 @@ test("问答失败时恢复输入并移除占位卡", async () => {
   assert.equal(ctx.el("qaInput").value, "会失败的问题", "输入内容还给用户");
   assert.equal(ctx.el("qaHint").hidden, false);
   assert.match(ctx.el("qaHint").textContent, /还没配置好/);
+});
+
+test("生成中「停止」可点且发送取消，Enter 不承担取消", async () => {
+  let release;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const ctx = createContext({
+    transcript: transcriptResult(),
+    replies: {
+      getQaHistory: async () => ({ success: true, entries: [] }),
+      startAiTask: async () => ({ success: true }),
+      askQuestion: async () => {
+        await gate;
+        return { success: false, error: "TASK_CANCELED" };
+      },
+      cancelAiTask: async () => ({ success: true }),
+    },
+  });
+  ctx.state.bvid = "BV1xx411c7mD";
+  ctx.state.page = 1;
+  ctx.switchTab("qa");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  ctx.el("qaInput").value = "问一半想撤回";
+  const pending = ctx.submitQuestion();
+  // 让 startAiTask 的微任务落地，qaActiveTaskId 就位。
+  await new Promise((resolve) => setTimeout(resolve, 0));
+
+  assert.equal(ctx.el("qaAskBtn").disabled, false, "生成中按钮不置灰，才点得到停止");
+  assert.equal(ctx.el("qaAskBtn").textContent, "停止");
+
+  // Enter 路径：进行中既不重复提问，也不取消。
+  await ctx.submitQuestion();
+  assert.equal(
+    ctx.sent.filter((message) => message.action === "askQuestion").length,
+    1,
+    "Enter 不会重复提问",
+  );
+
+  // 静态按钮绑定挂在 DOMContentLoaded 里，桩环境不触发；按仓库惯例
+  // 直接调用绑定的处理函数。
+  await ctx.onQaButtonClick();
+  assert.equal(
+    ctx.sent.filter((message) => message.action === "cancelAiTask").length,
+    1,
+    "点停止应发送取消",
+  );
+
+  release();
+  await pending;
+
+  assert.match(ctx.el("qaHint").textContent, /已取消/);
+  assert.equal(ctx.el("qaList").children.length, 0, "占位卡已移除");
 });
 
 test("问答卡片只有复制操作，且有成功反馈", async () => {

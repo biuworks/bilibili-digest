@@ -564,6 +564,20 @@ test("开头处不会越界取到负索引", () => {
   assert.match(context.fullContext, /^第0句 /);
 });
 
+test("字幕第一句之前的时间点落在第一行，而不是结尾", () => {
+  // B 站字幕常几秒后才出第一句：开头存的笔记不能错拿视频结尾那句。
+  const lateStart = NOTE_TRANSCRIPT.map((entry) => ({
+    ...entry,
+    start: entry.start + 10,
+  }));
+  const context = AI.noteContextAt(lateStart, 5);
+
+  assert.equal(context.index, 0);
+  assert.equal(context.targetText, "第0句");
+  assert.equal(context.beforeText, "");
+  assert.match(context.fullContext, /^第0句 /);
+});
+
 test("没有字幕时返回 null", () => {
   assert.equal(AI.noteContextAt([], 10), null);
   assert.equal(AI.noteContextAt(null, 10), null);
