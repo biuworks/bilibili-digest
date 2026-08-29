@@ -72,6 +72,14 @@ body {
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  /* 同侧边栏：非编辑区域不画插入符，避免折叠选区残留出幽灵光标 */
+  caret-color: transparent;
+}
+
+input,
+textarea,
+[contenteditable] {
+  caret-color: auto;
 }
 
 :where(button, input, select, a):focus-visible {

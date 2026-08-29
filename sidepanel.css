@@ -56,6 +56,21 @@ html body {
   zoom: var(--ui-font-zoom);
 }
 
+/* 幽灵插入符：Chromium 会在非编辑内容的折叠选区处画出闪烁的文本插入符——
+ * 在可选中的正文上单击、用方向键收拢选区，或列表重渲染/滚动时残留的旧选区
+ * 都会触发。正文默认可选（划词解释和复制依赖它），小页面又频繁重渲染，
+ * 于是五个标签页到处可能冒插入符。面板里真正要输入文字的只有搜索框、问答
+ * 输入与笔记编辑器，下面单独恢复；其余一律不画插入符（选区高亮不受影响）。 */
+html body {
+  caret-color: transparent;
+}
+
+input,
+textarea,
+[contenteditable] {
+  caret-color: auto;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #17181a;
