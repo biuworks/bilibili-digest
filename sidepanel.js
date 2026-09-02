@@ -776,17 +776,29 @@ async function loadSettings() {
   return BILI_SETTINGS.normalize(stored[BILI_SETTINGS.STORAGE_KEY]);
 }
 
-function applyStoredUiFontScale(raw) {
-  BILI_SETTINGS.applyUiFontScale(BILI_SETTINGS.normalize(raw).uiFontScale);
+// 外观（字号/色板/明暗/浓度）随存储即时生效：设置页改完，开着侧边栏
+// 也能立刻看到。记住最近一份配置，「跟随系统」模式下系统明暗切换时
+// 还要用它重算一次。
+let lastSettings = null;
+
+function applyStoredAppearance(raw) {
+  lastSettings = BILI_SETTINGS.normalize(raw);
+  BILI_SETTINGS.applyUiFontScale(lastSettings.uiFontScale);
+  BILI_SETTINGS.applyAppearance(lastSettings);
 }
 
-async function watchUiFontScale() {
+async function watchAppearance() {
   const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
-  applyStoredUiFontScale(stored[BILI_SETTINGS.STORAGE_KEY]);
+  applyStoredAppearance(stored[BILI_SETTINGS.STORAGE_KEY]);
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !changes[BILI_SETTINGS.STORAGE_KEY]) return;
-    applyStoredUiFontScale(changes[BILI_SETTINGS.STORAGE_KEY].newValue);
+    applyStoredAppearance(changes[BILI_SETTINGS.STORAGE_KEY].newValue);
   });
+  if (typeof matchMedia === "function") {
+    matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+      if (lastSettings) BILI_SETTINGS.applyAppearance(lastSettings);
+    });
+  }
 }
 
 function segmentCountText() {
@@ -2615,6 +2627,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   el("idleText").textContent = NO_VIDEO_TEXT;
   setupEventListeners();
   setInterval(trackPlayback, POLL_INTERVAL_MS);
-  await watchUiFontScale();
+  await watchAppearance();
   await syncWithActiveTab();
 });

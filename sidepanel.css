@@ -10,11 +10,14 @@
  */
 
 :root {
-  /* 品牌色 */
+  /* 品牌色。accent 系只做填充（按钮底、胶囊底、进度条），
+     落到文字上一律走 --accent-text（浅色下是校准过的深一档，
+     定义见 theme.css）——填充色明度太高，直接当文字对比度不达标。 */
   --accent: #fb7299;
   --accent-strong: #f0567e;
-  --accent-soft: rgba(251, 114, 153, 0.10);
-  --accent-soft-strong: rgba(251, 114, 153, 0.18);
+  /* 浅底随色板走：color-mix 让 10%/18% 两档透明粉跟着 accent 换色 */
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
+  --accent-soft-strong: color-mix(in srgb, var(--accent) 18%, transparent);
 
   /* 暖纸面（浅色）：背景带一点粉调，卡片是同一色族里略浅的暖白，
      三个标签页才不会有「这页红、那页白」的割裂感 */
@@ -71,8 +74,11 @@ textarea,
   caret-color: auto;
 }
 
+/* 暗色变量挂两个钩子：media query 兜 JS 写入 data-theme-mode 之前的首屏
+ * （跟随系统时无闪白），data-theme-mode 承接用户手动选择的明暗。
+ * 两处列表一致，改动请同步。 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme-mode="light"]) {
     --bg: #17181a;
     --card: #1f2022;
     --bg-hover: #27282b;
@@ -86,6 +92,21 @@ textarea,
     --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45);
     --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.55);
   }
+}
+
+:root[data-theme-mode="dark"] {
+  --bg: #17181a;
+  --card: #1f2022;
+  --bg-hover: #27282b;
+  --bg-active: #2e3034;
+  --text: #e3e5e7;
+  --text-muted: #9499a0;
+  --text-faint: #6b7076;
+  --border: #2f3134;
+  --border-strong: #3c3f43;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 6px 18px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.55);
 }
 
 * {
@@ -269,7 +290,7 @@ button {
 
 .icon-btn:hover,
 .ghost-btn:hover {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--accent);
   background: var(--accent-soft);
 }
@@ -332,7 +353,7 @@ button {
   padding: 1px 8px;
   font-size: 11px;
   font-weight: 500;
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
   border-radius: var(--radius-pill);
 }
@@ -378,7 +399,7 @@ button {
 .tab.active {
   color: #fff;
   background: var(--accent);
-  box-shadow: 0 2px 8px rgba(251, 114, 153, 0.32);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 32%, transparent);
 }
 
 /* ---------- 主体 ---------- */
@@ -442,7 +463,7 @@ button {
   border: none;
   border-radius: var(--radius-pill);
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(251, 114, 153, 0.3);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 30%, transparent);
   transition:
     background-color var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease),
@@ -451,12 +472,12 @@ button {
 
 .primary-btn:hover {
   background: var(--accent-strong);
-  box-shadow: 0 6px 16px rgba(251, 114, 153, 0.38);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 38%, transparent);
 }
 
 .primary-btn:active {
   transform: translateY(1px);
-  box-shadow: 0 2px 8px rgba(251, 114, 153, 0.3);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .primary-btn:disabled {
@@ -475,7 +496,7 @@ button {
   align-self: center;
   font-size: 13px;
   font-weight: 500;
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
 }
 
@@ -564,8 +585,8 @@ button {
   height: 64px;
   margin: 0 auto 18px;
   border-radius: 18px;
-  background: linear-gradient(135deg, #fb7299 0%, #f0567e 100%);
-  box-shadow: 0 10px 26px rgba(251, 114, 153, 0.35);
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-strong) 100%);
+  box-shadow: 0 10px 26px color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .brand-tile::after {
@@ -664,7 +685,7 @@ button {
 .segmented-btn.active {
   color: #fff;
   background: var(--accent);
-  box-shadow: 0 1px 4px rgba(251, 114, 153, 0.3);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .segmented-btn:disabled {
@@ -702,7 +723,7 @@ button {
   font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  color: var(--accent-text);
   padding-top: 2px;
 }
 
@@ -718,11 +739,11 @@ button {
 }
 
 .segment.active .segment-time {
-  color: var(--accent-strong);
+  color: var(--accent-text-strong);
   font-weight: 600;
 }
 
-/* 双语：原文在上、译文在下，各占一行 */
+/* 双语：原文在上、译文在下，各占一行。译文是阅读正文，跟随浓度设置 */
 .segment-source,
 .segment-translation {
   display: block;
@@ -734,7 +755,7 @@ button {
 }
 
 .segment-translation {
-  color: var(--text);
+  color: var(--reading-text);
 }
 
 .segment-translation.pending {
@@ -822,7 +843,7 @@ button {
   border: none;
   border-radius: var(--radius-pill);
   cursor: pointer;
-  box-shadow: 0 6px 18px rgba(251, 114, 153, 0.4);
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--accent) 40%, transparent);
   z-index: 30;
   animation: fadeInUp 200ms var(--ease);
   transition:
@@ -842,7 +863,7 @@ button {
 
 .task-stop-btn {
   flex: 0 0 auto;
-  color: var(--accent-strong);
+  color: var(--accent-text-strong);
 }
 
 .action-menu {
@@ -859,7 +880,7 @@ button {
 }
 
 .action-menu[open] > summary {
-  color: var(--accent-strong);
+  color: var(--accent-text-strong);
   background: var(--accent-soft);
   border-color: var(--accent-soft-strong);
 }
@@ -901,7 +922,7 @@ button {
 }
 
 .lang-menu > summary:hover {
-  color: var(--accent-strong);
+  color: var(--accent-text-strong);
   background: var(--accent-soft-strong);
 }
 
@@ -967,7 +988,7 @@ button {
 }
 
 .action-menu-options .segmented-btn.active {
-  color: var(--accent-strong);
+  color: var(--accent-text-strong);
   background: var(--accent-soft);
   box-shadow: none;
 }
@@ -1052,7 +1073,7 @@ button {
   font-family: var(--font-mono);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  color: var(--accent-text);
   cursor: pointer;
 }
 
@@ -1079,7 +1100,10 @@ button {
   margin: 0;
   font-size: 13px;
   line-height: 1.7;
-  color: var(--text-muted);
+  /* 阅读正文走浓度变量（theme.css）：默认「清晰」全对比度，
+     可切柔和/高对比。正文是概括的主角，不该永远躲在次要灰里。 */
+  color: var(--reading-text);
+  font-weight: var(--reading-weight);
   overflow-wrap: anywhere;
 }
 
@@ -1149,7 +1173,7 @@ button {
 .qa-question {
   margin: 0 0 6px;
   font-size: 13px;
-  color: var(--text);
+  color: var(--reading-text);
   overflow-wrap: anywhere;
 }
 
@@ -1198,7 +1222,7 @@ button {
 }
 
 .quote .entry-text {
-  color: var(--text);
+  color: var(--reading-text);
 }
 
 /* 金句开头的大引号，像纸书里的装饰 */
@@ -1281,21 +1305,21 @@ button {
   margin-top: 10px;
   padding: 11px 12px;
   background: var(--accent-soft);
-  border: 1px solid rgba(251, 114, 153, 0.24);
+  border: 1px solid color-mix(in srgb, var(--accent) 24%, transparent);
   border-radius: var(--radius-sm);
 }
 
 .note-ai-draft-head {
   font-size: 12px;
   font-weight: 700;
-  color: var(--accent-strong);
+  color: var(--accent-text-strong);
 }
 
 .note-ai-draft-text {
   margin: 7px 0 0;
   font-size: 13px;
   line-height: 1.7;
-  color: var(--text);
+  color: var(--reading-text);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1323,7 +1347,7 @@ button {
   padding: 2px 8px;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: var(--accent);
+  color: var(--accent-text);
   background: var(--accent-soft);
   border: none;
   border-radius: var(--radius-pill);
@@ -1414,7 +1438,7 @@ kbd {
   background: var(--accent);
   border: none;
   border-radius: var(--radius-pill);
-  box-shadow: 0 6px 16px rgba(251, 114, 153, 0.4);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 40%, transparent);
   cursor: pointer;
   transition:
     background-color var(--dur) var(--ease),
@@ -1476,7 +1500,7 @@ kbd {
 .explain-term {
   font-size: 12px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1488,5 +1512,6 @@ kbd {
   overflow-y: auto;
   font-size: 13px;
   line-height: 1.7;
+  color: var(--reading-text);
   overflow-wrap: anywhere;
 }

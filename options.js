@@ -17,6 +17,9 @@ const fields = {
   chunkMode: document.getElementById("analysisChunkMode"),
   overlapChars: document.getElementById("analysisOverlapChars"),
   uiFontScale: document.getElementById("uiFontScale"),
+  themeMode: document.getElementById("themeMode"),
+  textDensity: document.getElementById("textDensity"),
+  accentTheme: document.getElementById("accentTheme"),
 };
 const customFields = document.getElementById("customFields");
 const presetHint = document.getElementById("presetHint");
@@ -66,6 +69,57 @@ function fillPresets() {
 const isCustomPreset = () =>
   fields.preset.value === BILI_SETTINGS.CUSTOM_PRESET_ID;
 
+// ============================================================
+// 外观（色板 / 明暗 / 浓度）：即改即存，不参与「保存并授权」
+// ============================================================
+
+function fillSwatches() {
+  for (const [id, theme] of Object.entries(BILI_SETTINGS.ACCENT_THEMES)) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "swatch-btn";
+    button.dataset.value = id;
+    button.title = theme.label;
+    button.setAttribute("aria-label", `主题色：${theme.label}`);
+    button.setAttribute("aria-pressed", "false");
+    button.style.background = theme.swatch;
+    button.addEventListener("click", () => {
+      markActiveSwatch(id);
+      saveAppearance();
+    });
+    fields.accentTheme.appendChild(button);
+  }
+}
+
+function markActiveSwatch(id) {
+  for (const button of fields.accentTheme.children) {
+    const active = button.dataset.value === id;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  }
+}
+
+function selectedAccentTheme() {
+  for (const button of fields.accentTheme.children) {
+    if (button.classList.contains("active")) return button.dataset.value;
+  }
+  return null;
+}
+
+async function saveAppearance() {
+  const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+  const settings = BILI_SETTINGS.normalize({
+    ...stored[BILI_SETTINGS.STORAGE_KEY],
+    accentTheme: selectedAccentTheme(),
+    themeMode: fields.themeMode.value,
+    textDensity: fields.textDensity.value,
+  });
+  await chrome.storage.local.set({ [BILI_SETTINGS.STORAGE_KEY]: settings });
+  // 设置页与侧边栏共用变量层，这一下就是本页的实时预览；
+  // 侧边栏由自己的 storage 监听器跟进。
+  BILI_SETTINGS.applyAppearance(settings);
+}
+
 function currentSettings() {
   // 选了具体厂商时不提交协议与地址：这两栏藏着，可能还留着上次自定义的旧值。
   const custom = isCustomPreset();
@@ -80,6 +134,9 @@ function currentSettings() {
     analysisChunkMode: fields.chunkMode.value,
     analysisOverlapChars: fields.overlapChars.value,
     uiFontScale: fields.uiFontScale.value,
+    accentTheme: selectedAccentTheme(),
+    themeMode: fields.themeMode.value,
+    textDensity: fields.textDensity.value,
   });
 }
 
@@ -171,7 +228,11 @@ async function load() {
   fields.chunkMode.value = settings.analysisChunkMode;
   fields.overlapChars.value = settings.analysisOverlapChars;
   fields.uiFontScale.value = settings.uiFontScale;
+  fields.themeMode.value = settings.themeMode;
+  fields.textDensity.value = settings.textDensity;
+  markActiveSwatch(settings.accentTheme);
   BILI_SETTINGS.applyUiFontScale(settings.uiFontScale);
+  BILI_SETTINGS.applyAppearance(settings);
 
   const preset = BILI_SETTINGS.presetById(settings.presetId);
   if (preset?.docsUrl) applyPresetHintOnly(preset);
@@ -474,5 +535,8 @@ async function saveUiFontScale(writeBack = true) {
 
 fields.uiFontScale.addEventListener("change", () => saveUiFontScale(true));
 fields.uiFontScale.addEventListener("input", () => saveUiFontScale(false));
+fields.themeMode.addEventListener("change", saveAppearance);
+fields.textDensity.addEventListener("change", saveAppearance);
 
+fillSwatches();
 load();

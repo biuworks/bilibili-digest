@@ -8,6 +8,7 @@ const ROOT = path.join(__dirname, "..");
 
 function createElement(tagName = "div") {
   const listeners = new Map();
+  const classes = new Set();
   let text = "";
   const element = {
     tagName: tagName.toUpperCase(),
@@ -17,6 +18,24 @@ function createElement(tagName = "div") {
     focused: false,
     href: "",
     download: "",
+    dataset: {},
+    style: {},
+    setAttribute(name, value) {
+      if (!element.attributes) element.attributes = {};
+      element.attributes[name] = String(value);
+    },
+    getAttribute(name) {
+      return element.attributes?.[name] ?? null;
+    },
+    classList: {
+      toggle(name, force) {
+        const next = force === undefined ? !classes.has(name) : Boolean(force);
+        if (next) classes.add(name);
+        else classes.delete(name);
+        return next;
+      },
+      contains: (name) => classes.has(name),
+    },
     appendChild(child) {
       this.children.push(child);
       return child;
@@ -47,6 +66,7 @@ async function createContext() {
   const permissionRequests = [];
   const sent = [];
   const downloads = [];
+  const writes = [];
   const byId = (id) => {
     if (!elements.has(id)) {
       const tag = id === "modelOptions" || id === "preset" || id === "protocol"
@@ -101,7 +121,9 @@ async function createContext() {
               aiModel: "already-filled-model",
             },
           }),
-          set: async () => {},
+          set: async (data) => {
+            writes.push(data);
+          },
         },
       },
       runtime: {
@@ -146,11 +168,18 @@ async function createContext() {
 
   const source = fs.readFileSync(path.join(ROOT, "options.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { fetchModels, clearModelOptions, exportBackup };`,
+    `${source}\n;globalThis.__api = { fetchModels, clearModelOptions, exportBackup, accentRow: fields.accentTheme };`,
     context,
   );
   await new Promise((resolve) => setImmediate(resolve));
-  return { ...context.__api, el: byId, permissionRequests, sent, downloads };
+  return {
+    ...context.__api,
+    el: byId,
+    permissionRequests,
+    sent,
+    downloads,
+    writes,
+  };
 }
 
 test("模型列表使用原生 select，不依赖会过滤当前输入值的 datalist", () => {
@@ -176,10 +205,67 @@ test("设置页用数字自调界面字号，不必走保存并授权", () => {
   assert.match(html, /max=["']160["']/);
 });
 
+test("外观组提供主题色板、明暗模式与文字浓度三项设置", () => {
+  const html = fs.readFileSync(path.join(ROOT, "options.html"), "utf8");
+  assert.match(html, /<h2>外观<\/h2>/);
+  assert.match(html, /id=["']accentTheme["']/);
+  assert.match(html, /id=["']themeMode["']/);
+  for (const value of ["system", "light", "dark"]) {
+    assert.match(html, new RegExp(`value=["']${value}["']`));
+  }
+  assert.match(html, /id=["']textDensity["']/);
+  for (const value of ["clear", "soft", "high"]) {
+    assert.match(html, new RegExp(`value=["']${value}["']`));
+  }
+  // 两个页面都得挂上外观变量层，色板与浓度才会生效。
+  for (const page of ["sidepanel.html", "options.html"]) {
+    const source = fs.readFileSync(path.join(ROOT, page), "utf8");
+    assert.match(source, /<link[^>]+href=["']theme\.css["']/, `${page} 缺 theme.css`);
+  }
+});
+
 test("设置页允许调整相邻分块重复的上下文字符数", () => {
   const html = fs.readFileSync(path.join(ROOT, "options.html"), "utf8");
   assert.match(html, /id=["']analysisOverlapChars["']/);
   assert.match(html, /分块重叠字符数/);
+});
+
+test("theme.css 为每套非默认色板配齐明暗两套文字安全色", () => {
+  const settings = require("../settings.js");
+  const css = fs.readFileSync(path.join(ROOT, "theme.css"), "utf8");
+  for (const id of Object.keys(settings.ACCENT_THEMES)) {
+    if (id === "pink") continue; // 默认色板就在 :root 基底里，不需要覆盖块
+    assert.match(css, new RegExp(`\\[data-accent-theme=["']${id}["']\\]`), id);
+    assert.match(
+      css,
+      new RegExp(`\\[data-theme-mode=["']dark\\"]\\[data-accent-theme=["']${id}["']\\]`),
+      id,
+    );
+  }
+});
+
+test("点选主题色色板即时写入存储并落到根节点", async () => {
+  const settings = require("../settings.js");
+  const ctx = await createContext();
+
+  // 载入后存储里没有外观配置，默认粉色应处于选中态
+  assert.equal(ctx.accentRow.children[0].classList.contains("active"), true);
+
+  const indigo = ctx.accentRow.children[1];
+  await indigo.dispatch("click");
+  // saveAppearance 是异步落库，等它把微任务跑完
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(indigo.classList.contains("active"), true, "点选的色板要标为选中");
+  assert.equal(
+    ctx.accentRow.children[0].classList.contains("active"),
+    false,
+    "原先选中的色板要取消",
+  );
+  const write = ctx.writes.at(-1)?.[settings.STORAGE_KEY];
+  assert.equal(write.accentTheme, "indigo");
+  // 落到根节点 data 属性的一步由 settings.test.js 验证：这里 BILI_SETTINGS
+  // 是 node 侧模块，拿不到 vm 桩里的 document，断言不到 dataset。
 });
 
 test("拉取后在原位置用下拉框替换输入框，不显示两套重复控件", async () => {

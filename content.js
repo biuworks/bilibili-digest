@@ -153,10 +153,61 @@
     return svg;
   }
 
-  function styleButton(button, { floating }) {
+  // 主题色跟随设置页的色板：accentFill 是 RGB 分量串，供实心与半透明两种
+  // 底色复用。色值取 ACCENT_THEMES[].swatch（浅色填充档），与 theme.css 的
+  // 浅色 --accent 同源——按钮落在浅色的 B 站页面上，不跟面板的明暗模式走。
+  let accentFill = "251,114,153";
+  const themedButtons = new Set();
+
+  function accentRgb(swatch) {
+    const value = Number.parseInt(swatch.slice(1), 16);
+    return `${(value >> 16) & 255},${(value >> 8) & 255},${value & 255}`;
+  }
+
+  function paintButton({ button, floating, neutral }) {
+    // neutral：播放器上的笔记按钮刻意保持中性深色，不随主题变。
+    const background = neutral
+      ? "rgba(0,0,0,.55)"
+      : floating
+        ? `rgba(${accentFill},.92)`
+        : `rgb(${accentFill})`;
     button.style.cssText = floating
-      ? `${BUTTON_BASE}background:rgba(251,114,153,.92);box-shadow:0 2px 8px rgba(0,0,0,.2);`
-      : `${BUTTON_BASE}background:#fb7299;margin-left:12px;`;
+      ? `${BUTTON_BASE}background:${background};box-shadow:0 2px 8px rgba(0,0,0,.2);`
+      : `${BUTTON_BASE}background:${background};margin-left:12px;`;
+  }
+
+  function styleButton(button, { floating, neutral = false }) {
+    const record = { button, floating, neutral };
+    themedButtons.add(record);
+    paintButton(record);
+  }
+
+  function applyAccentTheme(accentTheme) {
+    const theme =
+      BILI_SETTINGS.ACCENT_THEMES[
+        BILI_SETTINGS.normalize({ accentTheme }).accentTheme
+      ];
+    accentFill = accentRgb(theme.swatch);
+    for (const record of themedButtons) paintButton(record);
+  }
+
+  // chrome.storage 被 background 的 setAccessLevel(TRUSTED_CONTEXTS) 挡在
+  // 内容脚本之外（读它会抛 "Access to storage is not allowed"），主题色
+  // 只能由 background 代读、经消息通道下发；设置变更也由它广播过来。
+  function watchAccentTheme() {
+    chrome.runtime.onMessage.addListener((message) => {
+      if (message?.action === "appearanceChanged") {
+        applyAccentTheme(message.accentTheme);
+      }
+    });
+    chrome.runtime
+      .sendMessage({ action: "getAppearance" })
+      .then((reply) => {
+        if (reply?.success) applyAccentTheme(reply.accentTheme);
+      })
+      .catch(() => {
+        /* 主题色不可用时保持品牌粉，按钮功能不受影响 */
+      });
   }
 
   // 浮动按钮共用一个纵向容器，否则 Digest 退化成浮动按钮时会和笔记按钮叠在一起。
@@ -247,8 +298,7 @@
     label.className = NOTE_LABEL_CLASS;
     label.textContent = "笔记";
     button.append(noteIcon(), label);
-    styleButton(button, { floating: true });
-    button.style.background = "rgba(0,0,0,.55)";
+    styleButton(button, { floating: true, neutral: true });
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -389,6 +439,8 @@
   async function init() {
     // 挂监听不碰 DOM，不会干扰 hydration，可以立刻生效。
     document.addEventListener("keydown", handleKeydown);
+    // 主题色读取是异步的，按钮注入要等页面稳定，先后天然错开；不 await。
+    watchAccentTheme();
 
     await whenWindowLoaded();
     await whenPlayerMounted();

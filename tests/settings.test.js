@@ -387,6 +387,48 @@ test("概览分块模式默认自动，并只接受自动、较短、较长三�
   assert.equal(settings.normalize({ analysisChunkMode: "unknown" }).analysisChunkMode, "auto");
 });
 
+test("外观三项：默认值、非法值回退与合法值透传", () => {
+  assert.equal(settings.normalize({}).accentTheme, "pink");
+  assert.equal(settings.normalize({}).themeMode, "system");
+  assert.equal(settings.normalize({}).textDensity, "clear");
+
+  assert.equal(settings.normalize({ accentTheme: "indigo" }).accentTheme, "indigo");
+  assert.equal(settings.normalize({ accentTheme: "neon-green" }).accentTheme, "pink");
+  assert.equal(settings.normalize({ themeMode: "dark" }).themeMode, "dark");
+  assert.equal(settings.normalize({ themeMode: "sepia" }).themeMode, "system");
+  assert.equal(settings.normalize({ textDensity: "soft" }).textDensity, "soft");
+  assert.equal(settings.normalize({ textDensity: "high" }).textDensity, "high");
+  assert.equal(settings.normalize({ textDensity: "bold" }).textDensity, "clear");
+});
+
+test("resolveThemeMode 把跟随系统解析成具体明暗（无浏览器环境按浅色）", () => {
+  assert.equal(settings.resolveThemeMode("light"), "light");
+  assert.equal(settings.resolveThemeMode("dark"), "dark");
+  // node 里没有 matchMedia，跟随系统回落为浅色
+  assert.equal(settings.resolveThemeMode("system"), "light");
+  assert.equal(settings.resolveThemeMode(), "light");
+});
+
+test("applyAppearance 把三项外观落到根节点的 data 属性上", () => {
+  const root = { dataset: {} };
+  const normalized = settings.applyAppearance(
+    { accentTheme: "teal", themeMode: "dark", textDensity: "soft" },
+    root,
+  );
+  assert.equal(root.dataset.accentTheme, "teal");
+  assert.equal(root.dataset.themeMode, "dark");
+  assert.equal(root.dataset.textDensity, "soft");
+  assert.equal(normalized.accentTheme, "teal");
+
+  // 跟随系统要在无浏览器环境时安全落地
+  const plain = { dataset: {} };
+  settings.applyAppearance({}, plain);
+  assert.equal(plain.dataset.themeMode, "light");
+
+  // 没有可写的根节点（node 引入 settings.js 做纯校验时）不能抛错
+  assert.doesNotThrow(() => settings.applyAppearance({}, null));
+});
+
 test("概览分块模式映射成稳定的字符上限", () => {
   assert.deepEqual(settings.analysisChunkOptions({ analysisChunkMode: "auto" }), {
     maxChars: 6000,

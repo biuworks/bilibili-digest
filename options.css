@@ -4,9 +4,10 @@
  */
 
 :root {
+  /* accent 系只做填充；落到文字上一律走 --accent-text（theme.css） */
   --accent: #fb7299;
   --accent-strong: #f0567e;
-  --accent-soft: rgba(251, 114, 153, 0.10);
+  --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
 
   --bg: #faf6f7;
   /* 卡片与侧边栏同色族：与纸面统一的暖白，不再用刺眼的纯白 */
@@ -43,8 +44,10 @@ html body {
   zoom: var(--ui-font-zoom);
 }
 
+/* 暗色变量挂两个钩子：media query 兜 JS 写入 data-theme-mode 之前的首屏，
+   data-theme-mode 承接用户手动选择的明暗。两处列表一致，改动请同步。 */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme-mode="light"]) {
     --bg: #17181a;
     --card: #1f2022;
     --input: var(--bg);
@@ -57,6 +60,20 @@ html body {
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
     --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
   }
+}
+
+:root[data-theme-mode="dark"] {
+  --bg: #17181a;
+  --card: #1f2022;
+  --input: var(--bg);
+  --bg-hover: #27282b;
+  --text: #e3e5e7;
+  --text-muted: #9499a0;
+  --text-faint: #6b7076;
+  --border: #2f3134;
+  --border-strong: #3c3f43;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 * {
@@ -213,7 +230,7 @@ input::placeholder {
 }
 
 .field-hint a {
-  color: var(--accent);
+  color: var(--accent-text);
   text-decoration: none;
 }
 
@@ -270,7 +287,7 @@ code {
   border: none;
   border-radius: var(--radius-pill);
   cursor: pointer;
-  box-shadow: 0 4px 12px rgba(251, 114, 153, 0.3);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 30%, transparent);
   transition:
     background-color var(--dur) var(--ease),
     box-shadow var(--dur) var(--ease),
@@ -279,12 +296,12 @@ code {
 
 .primary-btn:hover {
   background: var(--accent-strong);
-  box-shadow: 0 6px 16px rgba(251, 114, 153, 0.38);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--accent) 38%, transparent);
 }
 
 .primary-btn:active {
   transform: translateY(1px);
-  box-shadow: 0 2px 8px rgba(251, 114, 153, 0.3);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent) 30%, transparent);
 }
 
 .ghost-btn {
@@ -304,7 +321,7 @@ code {
 }
 
 .ghost-btn:hover {
-  color: var(--accent);
+  color: var(--accent-text);
   border-color: var(--accent);
   background: var(--accent-soft);
 }
@@ -321,4 +338,35 @@ code {
 
 .status:empty {
   display: none;
+}
+
+/* ---------- 主题色板：一圈色点，点选即换 ---------- */
+
+.swatch-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+.swatch-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border-radius: 50%;
+  /* 内圈留一圈卡片色，色点周围有呼吸感 */
+  box-shadow: inset 0 0 0 2px var(--card);
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition:
+    transform var(--dur) var(--ease),
+    border-color var(--dur) var(--ease);
+}
+
+.swatch-btn:hover {
+  transform: scale(1.1);
+}
+
+.swatch-btn.active {
+  border-color: var(--text);
 }

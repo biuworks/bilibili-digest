@@ -1,0 +1,142 @@
+/* Bilibili Digest — 外观主题变量层。
+ *
+ * 侧边栏与设置页共用：html 上的三个 data 属性驱动全部切换——
+ *   data-accent-theme  主题色板（settings.ACCENT_THEMES）
+ *   data-theme-mode    解析后的明暗（system 已在 settings.applyAppearance 里落地）
+ *   data-text-density  阅读正文浓度
+ * 这里只放「跟着外观变的变量」；结构性样式留在各自的 sidepanel.css / options.css。
+ *
+ * 暗色值挂了两套选择器：data-theme-mode 承接 JS 写下的最终结果；
+ * 「prefers-color-scheme + 未指定」兜 JS 读到存储之前的首屏底，
+ * 避免系统深色用户每次打开面板先闪一下浅色。两处列表须同步维护。
+ */
+
+:root {
+  /* 文字浓度三档共用的变量：默认「清晰」，正文吃全对比度 */
+  --text-strong: #1c1519;
+  --reading-text: var(--text);
+  --reading-weight: 400;
+
+  /* 强调色拿来做文字时用这一档：默认色板（B站粉）的填充色明度太高，
+     直接当文字在浅色卡片上只有 2.5:1，这里换过 AA 校准的深一档 */
+  --accent-text: #c9385f;
+  --accent-text-strong: #a52a4b;
+}
+
+:root[data-theme-mode="dark"] {
+  --text-strong: #ffffff;
+  --accent-text: #fb7299;
+  --accent-text-strong: #ffa1c2;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme-mode="light"]) {
+    --text-strong: #ffffff;
+    --accent-text: #fb7299;
+    --accent-text-strong: #ffa1c2;
+  }
+}
+
+:root[data-text-density="soft"] {
+  --reading-text: var(--text-muted);
+}
+
+:root[data-text-density="high"] {
+  --reading-text: var(--text-strong);
+  --reading-weight: 500;
+}
+
+/* ---------- 色板：浅色值 ----------
+ * 每套四个变量成对出现：accent / accent-strong 只做填充（按钮、胶囊底），
+ * accent-text / accent-text-strong 才能落到文字上；后者在各自模式的
+ * 卡片底色上均通过 WCAG AA（≥ 4.5:1），换色板不会把文字拖进不可读区。 */
+
+:root[data-accent-theme="indigo"] {
+  --accent: #4c6ef5;
+  --accent-strong: #4263eb;
+  --accent-text: #3b5bdb;
+  --accent-text-strong: #2f4ac2;
+}
+
+:root[data-accent-theme="teal"] {
+  --accent: #12b886;
+  --accent-strong: #0ca678;
+  --accent-text: #087f5b;
+  --accent-text-strong: #08604a;
+}
+
+:root[data-accent-theme="amber"] {
+  --accent: #f76707;
+  --accent-strong: #e8590c;
+  --accent-text: #c2410c;
+  --accent-text-strong: #9a3412;
+}
+
+:root[data-accent-theme="violet"] {
+  --accent: #845ef7;
+  --accent-strong: #7950f2;
+  --accent-text: #6741d9;
+  --accent-text-strong: #5227ad;
+}
+
+/* ---------- 色板：深色值 ----------
+ * 深色卡片底上文字要「更亮」而非「更深」，各板的文字档换成填充色本身
+ * 或再亮一档；选择器多一层 data-theme-mode，压过上面的浅色值。 */
+
+:root[data-theme-mode="dark"][data-accent-theme="indigo"] {
+  --accent: #748ffc;
+  --accent-strong: #91a7ff;
+  --accent-text: #a5b4fc;
+  --accent-text-strong: #bac8ff;
+}
+
+:root[data-theme-mode="dark"][data-accent-theme="teal"] {
+  --accent: #20c997;
+  --accent-strong: #38d9a9;
+  --accent-text: #63e6be;
+  --accent-text-strong: #8ff0cd;
+}
+
+:root[data-theme-mode="dark"][data-accent-theme="amber"] {
+  --accent: #ffa94d;
+  --accent-strong: #ffb86b;
+  --accent-text: #ffc078;
+  --accent-text-strong: #ffd8a8;
+}
+
+:root[data-theme-mode="dark"][data-accent-theme="violet"] {
+  --accent: #9775fa;
+  --accent-strong: #b197fc;
+  --accent-text: #d0bfff;
+  --accent-text-strong: #e5dbff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme-mode="light"])[data-accent-theme="indigo"] {
+    --accent: #748ffc;
+    --accent-strong: #91a7ff;
+    --accent-text: #a5b4fc;
+    --accent-text-strong: #bac8ff;
+  }
+
+  :root:not([data-theme-mode="light"])[data-accent-theme="teal"] {
+    --accent: #20c997;
+    --accent-strong: #38d9a9;
+    --accent-text: #63e6be;
+    --accent-text-strong: #8ff0cd;
+  }
+
+  :root:not([data-theme-mode="light"])[data-accent-theme="amber"] {
+    --accent: #ffa94d;
+    --accent-strong: #ffb86b;
+    --accent-text: #ffc078;
+    --accent-text-strong: #ffd8a8;
+  }
+
+  :root:not([data-theme-mode="light"])[data-accent-theme="violet"] {
+    --accent: #9775fa;
+    --accent-strong: #b197fc;
+    --accent-text: #d0bfff;
+    --accent-text-strong: #e5dbff;
+  }
+}

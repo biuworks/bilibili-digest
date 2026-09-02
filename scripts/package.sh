@@ -21,6 +21,7 @@ FILES=(
   options.html
   options.css
   options.js
+  theme.css
   icons/icon16.png
   icons/icon48.png
   icons/icon128.png

@@ -119,6 +119,33 @@ var BILI_SETTINGS = (() => {
     long: Object.freeze({ maxChars: 12000, singleChars: 14000 }),
   });
 
+  // 外观预设。高饱和色直接拿来当文字对比度不达标，所以每套色板在
+  // theme.css 里拆成「填充色」和「文字安全色」两档、按明暗模式各配一套，
+  // 这里不存那两组色值，避免两处失同步。swatch 是浅色填充档，底色固定为
+  // 浅色的场景（设置页色板圆点、播放页按钮）从这取值。
+  const ACCENT_THEMES = Object.freeze({
+    pink: Object.freeze({ label: "B站粉", swatch: "#fb7299" }),
+    indigo: Object.freeze({ label: "靛蓝", swatch: "#4c6ef5" }),
+    teal: Object.freeze({ label: "松石绿", swatch: "#12b886" }),
+    amber: Object.freeze({ label: "琥珀", swatch: "#f76707" }),
+    violet: Object.freeze({ label: "雾紫", swatch: "#845ef7" }),
+  });
+
+  const THEME_MODES = Object.freeze({
+    SYSTEM: "system",
+    LIGHT: "light",
+    DARK: "dark",
+  });
+
+  // 文字浓度只调「阅读正文」（概览摘要、金句、字幕译文等）：
+  // soft 是改动前的柔和灰，clear 让正文回到全对比度（默认），
+  // high 面向低视力用户，在 clear 之上再加一档字重。
+  const TEXT_DENSITIES = Object.freeze({
+    SOFT: "soft",
+    CLEAR: "clear",
+    HIGH: "high",
+  });
+
   const DEFAULTS = Object.freeze({
     presetId: DEFAULT_PRESET.id,
     protocol: DEFAULT_PRESET.protocol,
@@ -130,6 +157,9 @@ var BILI_SETTINGS = (() => {
     analysisChunkMode: "auto",
     analysisOverlapChars: LIMITS.analysisOverlapChars.default,
     uiFontScale: LIMITS.uiFontScale.default,
+    accentTheme: "pink",
+    themeMode: THEME_MODES.SYSTEM,
+    textDensity: TEXT_DENSITIES.CLEAR,
     // 字幕轨优先级：UP 主中文 > AI 中文 > 英文（见 lib/bili-api.js）。
     subtitleLangPreference: Object.freeze([
       "zh-CN",
@@ -173,6 +203,32 @@ var BILI_SETTINGS = (() => {
       root.style.setProperty("--ui-font-zoom", String(value / 100));
     }
     return value;
+  }
+
+  // 「跟随系统」在这里解析成具体明暗：CSS 里暗色变量挂两套选择器——
+  // 一套给 media query（JS 生效前的首屏兜底），一套给这里写下的
+  // data-theme-mode。resolveThemeMode 没有浏览器环境时按浅色处理。
+  function resolveThemeMode(mode = DEFAULTS.themeMode) {
+    if (mode === THEME_MODES.LIGHT) return "light";
+    if (mode === THEME_MODES.DARK) return "dark";
+    const prefersDark =
+      typeof matchMedia === "function" &&
+      matchMedia("(prefers-color-scheme: dark)").matches;
+    return prefersDark ? "dark" : "light";
+  }
+
+  // 外观三项都落在 html 的 data 属性上，由 theme.css 按属性切换变量。
+  function applyAppearance(
+    settings,
+    root = typeof document !== "undefined" ? document.documentElement : null,
+  ) {
+    const normalized = normalize(settings);
+    if (root?.dataset) {
+      root.dataset.accentTheme = normalized.accentTheme;
+      root.dataset.themeMode = resolveThemeMode(normalized.themeMode);
+      root.dataset.textDensity = normalized.textDensity;
+    }
+    return normalized;
   }
 
   function clampNumber(value, { min, max, default: fallback }) {
@@ -306,6 +362,15 @@ var BILI_SETTINGS = (() => {
         LIMITS.analysisOverlapChars,
       ),
       uiFontScale: normalizeUiFontScale(source),
+      accentTheme: Object.hasOwn(ACCENT_THEMES, source.accentTheme)
+        ? source.accentTheme
+        : DEFAULTS.accentTheme,
+      themeMode: Object.values(THEME_MODES).includes(source.themeMode)
+        ? source.themeMode
+        : DEFAULTS.themeMode,
+      textDensity: Object.values(TEXT_DENSITIES).includes(source.textDensity)
+        ? source.textDensity
+        : DEFAULTS.textDensity,
       subtitleLangPreference: normalizeLangPreference(source.subtitleLangPreference),
     };
   }
@@ -348,10 +413,15 @@ var BILI_SETTINGS = (() => {
     DEFAULTS,
     LIMITS,
     ANALYSIS_CHUNK_MODES,
+    ACCENT_THEMES,
+    THEME_MODES,
+    TEXT_DENSITIES,
     analysisChunkOptions,
     normalize,
     normalizeUiFontScale,
     applyUiFontScale,
+    resolveThemeMode,
+    applyAppearance,
     normalizeLangPreference,
     validate,
     validateBaseUrl,

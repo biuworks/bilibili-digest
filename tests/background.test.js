@@ -49,6 +49,9 @@ function createBackground({
   const idb = createMemoryIndexedDb();
   let messageListener;
   const broadcasts = [];
+  const storageChangedListeners = [];
+  const tabMessages = [];
+  let tabsToReturn = [];
   const context = {
     console,
     setTimeout,
@@ -85,10 +88,22 @@ function createBackground({
     },
     importScripts() {},
     chrome: {
-      storage: { local: storage },
+      storage: {
+        local: storage,
+        onChanged: { addListener: (fn) => storageChangedListeners.push(fn) },
+      },
+      tabs: {
+        query: (queryInfo, callback) => callback(tabsToReturn),
+        sendMessage: async (tabId, message) => {
+          tabMessages.push({ tabId, message });
+        },
+      },
       sidePanel: { setPanelBehavior: async () => {}, open: async () => {} },
       runtime: {
         getURL: (value) => value,
+        getManifest: () => ({
+          content_scripts: [{ matches: ["https://www.bilibili.com/video/*"] }],
+        }),
         openOptionsPage() {},
         onInstalled: { addListener() {} },
         onStartup: { addListener() {} },
@@ -152,7 +167,17 @@ function createBackground({
     });
   }
 
-  return { storage, send, broadcasts, idb };
+  return {
+    storage,
+    send,
+    broadcasts,
+    idb,
+    storageChangedListeners,
+    tabMessages,
+    setTabs: (tabs) => {
+      tabsToReturn = tabs;
+    },
+  };
 }
 
 // 笔记的正牌后端在沙箱的假 IndexedDB 里，用同一套真实驱动读出来断言。
@@ -919,4 +944,48 @@ test("取消问答任务返回 TASK_CANCELED 且不落历史", async () => {
   await started;
   await ctx.send({ action: "cancelAiTask", taskId: "qa-c" });
   void pending;
+});
+
+// ============================================================
+// 外观：内容脚本被 TRUSTED_CONTEXTS 挡在 storage 外，由 background 代读与广播
+// ============================================================
+
+test("getAppearance 返回当前主题色板", async () => {
+  const ctx = createBackground({
+    initial: { [SETTINGS.STORAGE_KEY]: { accentTheme: "violet" } },
+  });
+  const reply = await ctx.send({ action: "getAppearance" });
+  assert.equal(reply.success, true);
+  assert.equal(reply.accentTheme, "violet");
+});
+
+test("主题色变更会广播给播放页内容脚本，其它变更不广播", async () => {
+  const ctx = createBackground();
+  ctx.setTabs([{ id: 1 }, { id: 2 }]);
+
+  for (const listener of ctx.storageChangedListeners) {
+    listener(
+      { [SETTINGS.STORAGE_KEY]: { newValue: { accentTheme: "amber" } } },
+      "local",
+    );
+  }
+  assert.deepEqual(
+    ctx.tabMessages.map(({ tabId, message }) => [
+      tabId,
+      message.action,
+      message.accentTheme,
+    ]),
+    [
+      [1, "appearanceChanged", "amber"],
+      [2, "appearanceChanged", "amber"],
+    ],
+  );
+
+  // 非主题色的存储变更、非 local 区域都不该惊动内容脚本
+  ctx.tabMessages.length = 0;
+  for (const listener of ctx.storageChangedListeners) {
+    listener({ [LEARNING_STORE.NOTES_KEY]: { newValue: {} } }, "local");
+    listener({ [SETTINGS.STORAGE_KEY]: { newValue: {} } }, "sync");
+  }
+  assert.equal(ctx.tabMessages.length, 0);
 });

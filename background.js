@@ -333,6 +333,28 @@ async function handleOpenSidePanel(tab) {
 // 消息路由
 // ============================================================
 
+// 播放页的内容脚本被 restrictStorageAccess 挡在 chrome.storage 之外
+// （TRUSTED_CONTEXTS 是有意为之的安全边界），读不到外观配置也收不到
+// 存储变更——由这里代读、经消息通道下发。
+const contentScriptMatches = chrome.runtime
+  .getManifest()
+  .content_scripts.flatMap((entry) => entry.matches || []);
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes[BILI_SETTINGS.STORAGE_KEY]) return;
+  const { accentTheme } = BILI_SETTINGS.normalize(
+    changes[BILI_SETTINGS.STORAGE_KEY].newValue,
+  );
+  chrome.tabs.query({ url: contentScriptMatches }, (tabs) => {
+    for (const tab of tabs) {
+      // 标签页正在导航或还没挂监听时 sendMessage 会 reject，属正常情况。
+      chrome.tabs
+        .sendMessage(tab.id, { action: "appearanceChanged", accentTheme })
+        .catch(() => {});
+    }
+  });
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === "startAiTask") {
     sendResponse(startAiTask(message));
@@ -394,6 +416,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.runtime.openOptionsPage();
     sendResponse({ success: true });
     return false;
+  }
+
+  if (message?.action === "getAppearance") {
+    getSettings()
+      .then((settings) =>
+        sendResponse({ success: true, accentTheme: settings.accentTheme }),
+      )
+      .catch(() => sendResponse({ success: false }));
+    return true; // 异步回复
   }
 
   if (message?.action === "openSidePanel") {

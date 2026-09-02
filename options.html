@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <title>Digest for Bilibili 设置</title>
   <link rel="stylesheet" href="options.css">
+  <link rel="stylesheet" href="theme.css">
 </head>
 <body>
   <main class="page">
@@ -19,16 +20,40 @@
     </section>
 
     <section class="card">
-      <h2>显示</h2>
+      <h2>外观</h2>
       <p class="hint">
         本节设置仅作用于当前设备的侧边栏与本页面，修改后立即生效，无需执行「保存并授权」。
       </p>
+
+      <div class="field">
+        <span class="field-label">主题色</span>
+        <div class="swatch-row" id="accentTheme" role="group" aria-label="主题色"></div>
+        <span class="field-hint">时间戳、标签与按钮的强调色，文字对比度已按明暗模式校准。</span>
+      </div>
+
+      <label class="field">
+        <span class="field-label">明暗模式</span>
+        <select id="themeMode">
+          <option value="system">跟随系统</option>
+          <option value="light">浅色</option>
+          <option value="dark">深色</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span class="field-label">文字浓度</span>
+        <select id="textDensity">
+          <option value="clear">清晰（推荐）</option>
+          <option value="soft">柔和</option>
+          <option value="high">高对比</option>
+        </select>
+        <span class="field-hint">作用于概览摘要、金句与字幕译文等阅读正文。</span>
+      </label>
+
       <label class="field">
         <span class="field-label">界面字号（%）</span>
         <input id="uiFontScale" type="number" min="80" max="160" step="5">
-        <span class="field-hint">
-          默认值 100，可设置范围 80 至 160。字幕、概览与笔记同步缩放。
-        </span>
+        <span class="field-hint">默认 100，范围 80–160，字幕、概览与笔记同步缩放。</span>
       </label>
     </section>
 

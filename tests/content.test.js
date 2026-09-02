@@ -17,6 +17,7 @@ const vm = require("node:vm");
 
 const ROOT = path.join(__dirname, "..");
 const SOURCE = fs.readFileSync(path.join(ROOT, "content.js"), "utf8");
+const settings = require("../settings.js");
 
 function createDom() {
   const byId = new Map();
@@ -118,8 +119,10 @@ function start({
   dom,
   href = "https://www.bilibili.com/video/BV1xx411c7mD",
   sendMessage = () => Promise.resolve({ success: true }),
+  appearance = {},
 }) {
   const intervals = [];
+  const runtimeMessageListeners = [];
   const context = {
     console,
     // 压成 0：脚本等的是「页面稳定」这个事件顺序，不是具体秒数。
@@ -133,10 +136,18 @@ function start({
     location: { href, search: "" },
     window: { addEventListener() {} },
     document: dom.document,
+    BILI_SETTINGS: settings,
     chrome: {
       runtime: {
-        sendMessage,
-        onMessage: { addListener() {} },
+        sendMessage: async (message) => {
+          if (message?.action === "getAppearance") {
+            return { success: true, ...appearance };
+          }
+          return sendMessage(message);
+        },
+        onMessage: {
+          addListener: (fn) => runtimeMessageListeners.push(fn),
+        },
       },
     },
   };
@@ -144,7 +155,10 @@ function start({
   vm.createContext(context);
   vm.runInContext(SOURCE, context);
 
-  return { tick: () => intervals.forEach((fn) => fn()) };
+  return {
+    tick: () => intervals.forEach((fn) => fn()),
+    runtimeMessageListeners,
+  };
 }
 
 /** 启动脚本并等它走完「页面稳定」的等待链。 */
@@ -180,6 +194,56 @@ test("页面稳定之前一个节点都不动", async () => {
     "等页面稳定之后总得把按钮放上去",
   );
   assert.ok(tick);
+});
+
+test("Digest 按钮跟随主题色板", async () => {
+  const dom = createDom();
+  const toolbar = dom.register(".video-toolbar-left");
+  await run({ dom, appearance: { accentTheme: "teal" } });
+
+  const digest = toolbar.children.find((child) => child.id === DIGEST_ID);
+  assert.match(
+    digest.style.cssText,
+    /background:rgb\(18,184,134\)/,
+    "teal 色板的浅色填充要落到按钮上",
+  );
+});
+
+test("background 广播外观变更时已注入的按钮会重涂", async () => {
+  const dom = createDom();
+  const toolbar = dom.register(".video-toolbar-left");
+  const { runtimeMessageListeners } = await run({ dom });
+
+  const digest = toolbar.children.find((child) => child.id === DIGEST_ID);
+  assert.match(digest.style.cssText, /rgb\(251,114,153\)/, "默认是品牌粉");
+
+  for (const listener of runtimeMessageListeners) {
+    listener({ action: "appearanceChanged", accentTheme: "amber" }, {});
+  }
+  assert.match(
+    digest.style.cssText,
+    /background:rgb\(247,103,7\)/,
+    "换成琥珀色板后按钮要跟着重涂",
+  );
+});
+
+test("播放器上的笔记按钮保持中性深色，不随主题重涂", async () => {
+  const dom = createDom();
+  dom.register(".video-toolbar-left");
+  dom.register("#bilibili-player");
+  const { runtimeMessageListeners } = await run({ dom });
+
+  const note = dom.document.getElementById(NOTE_ID);
+  assert.match(note.style.cssText, /rgba\(0,0,0,\.55\)/, "初始是中性深色");
+
+  for (const listener of runtimeMessageListeners) {
+    listener({ action: "appearanceChanged", accentTheme: "amber" }, {});
+  }
+  assert.match(
+    note.style.cssText,
+    /rgba\(0,0,0,\.55\)/,
+    "重涂后仍是中性深色，不该被主题色盖掉",
+  );
 });
 
 test("浮动按钮不会挂进直接包着 <video> 的那一层", async () => {
