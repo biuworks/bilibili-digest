@@ -68,13 +68,20 @@ test("Anthropic 协议下 base 里多余的 /v1 会被去掉，避免拼成 /v1/
   );
 });
 
-test("明文 http 只对本机放行", () => {
-  assert.equal(settings.validateBaseUrl("http://localhost:11434/v1").ok, true);
+test("明文 http 放行：本机无警告，远端给警告不拦截", () => {
+  const local = settings.validateBaseUrl("http://localhost:11434/v1");
+  assert.equal(local.ok, true);
+  assert.equal(local.warning, undefined);
   assert.equal(settings.validateBaseUrl("http://127.0.0.1:8000/v1").ok, true);
 
   const remote = settings.validateBaseUrl("http://api.example.com/v1");
-  assert.equal(remote.ok, false);
-  assert.match(remote.error, /https/);
+  assert.equal(remote.ok, true);
+  assert.match(remote.warning, /明文/);
+  assert.equal(remote.url, "http://api.example.com/v1");
+  assert.equal(remote.origin, "http://api.example.com/");
+
+  // Chrome 权限系统申请不到 IPv6 字面量，仍然拦下。
+  assert.equal(settings.validateBaseUrl("http://[::1]:11434/v1").ok, false);
 });
 
 test("拒绝非 http(s) 协议与非法 URL", () => {
@@ -153,7 +160,7 @@ test("两种协议拼出各自的模型列表端点", () => {
 
 test("地址非法时端点返回 null 而不是拼出一个坏 URL", () => {
   assert.equal(
-    settings.chatCompletionsUrl(custom({ aiBaseUrl: "http://evil.example.com" })),
+    settings.chatCompletionsUrl(custom({ aiBaseUrl: "ftp://evil.example.com" })),
     null,
   );
 });
@@ -271,9 +278,9 @@ test("未知的协议或预设回落到默认值", () => {
 test("非法地址原样保留，交给设置页报错，而不是悄悄改回默认值", () => {
   const normalized = settings.normalize({
     presetId: "custom",
-    aiBaseUrl: "http://api.example.com",
+    aiBaseUrl: "ftp://api.example.com",
   });
-  assert.equal(normalized.aiBaseUrl, "http://api.example.com");
+  assert.equal(normalized.aiBaseUrl, "ftp://api.example.com");
   assert.equal(settings.validate(normalized).ok, false);
 });
 
@@ -312,6 +319,18 @@ test("本地服务允许不填密钥", () => {
     aiModel: "qwen3",
   });
   assert.equal(local.ok, true, local.errors.join(" "));
+});
+
+test("validate 对远端 http 只警告不拦截", () => {
+  const result = settings.validate(
+    custom({
+      aiBaseUrl: "http://192.168.1.10:8000/v1",
+      aiApiKey: "k",
+      aiModel: "m",
+    }),
+  );
+  assert.equal(result.ok, true, result.errors.join(" "));
+  assert.match(result.warnings.join(""), /明文/);
 });
 
 test("配置齐全时通过校验", () => {

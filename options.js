@@ -303,7 +303,12 @@ async function save() {
   fields.chunkMode.value = settings.analysisChunkMode;
   fields.overlapChars.value = settings.analysisOverlapChars;
   fields.uiFontScale.value = settings.uiFontScale;
-  showStatus("已保存并授权");
+  showStatus(
+    check.warnings?.length
+      ? `已保存并授权。${check.warnings.join(" ")}`
+      : "已保存并授权",
+    check.warnings?.length ? { sticky: true } : {},
+  );
   return true;
 }
 
