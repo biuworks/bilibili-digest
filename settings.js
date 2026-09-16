@@ -160,6 +160,9 @@ var BILI_SETTINGS = (() => {
     accentTheme: "pink",
     themeMode: THEME_MODES.SYSTEM,
     textDensity: TEXT_DENSITIES.CLEAR,
+    // 自定义概览「系统提示词」。空字符串=未自定义，运行时读内置 prompts/analysis.md。
+    // 缺省切勿把内置全文写入存储。
+    analysisSystemPrompt: "",
     // 字幕轨优先级：UP 主中文 > AI 中文 > 英文（见 lib/bili-api.js）。
     subtitleLangPreference: Object.freeze([
       "zh-CN",
@@ -247,6 +250,29 @@ var BILI_SETTINGS = (() => {
       .filter((lang) => LANG_CODE_PATTERN.test(lang))
       .slice(0, 20);
     return cleaned.length ? cleaned : [...DEFAULTS.subtitleLangPreference];
+  }
+
+  // 空白视为未设置；上限挡住异常超大粘贴，避免撑爆 storage。
+  const ANALYSIS_SYSTEM_PROMPT_MAX = 50000;
+  function normalizeAnalysisSystemPrompt(input) {
+    if (typeof input !== "string") return "";
+    const trimmed = input.trim();
+    if (!trimmed) return "";
+    return trimmed.slice(0, ANALYSIS_SYSTEM_PROMPT_MAX);
+  }
+
+  function hasCustomAnalysisSystemPrompt(settings = {}) {
+    return Boolean(normalizeAnalysisSystemPrompt(normalize(settings).analysisSystemPrompt));
+  }
+
+  // 备份合并：缺字段或空字符串都不覆盖本机已有自定义。
+  function mergeAnalysisSystemPrompt(existing, incoming) {
+    const current = normalizeAnalysisSystemPrompt(existing);
+    if (incoming == null) return current;
+    if (typeof incoming !== "string") return current;
+    const next = incoming.trim();
+    if (!next) return current;
+    return next.slice(0, ANALYSIS_SYSTEM_PROMPT_MAX);
   }
 
   const presetById = (id) => PRESETS.find((preset) => preset.id === id) || null;
@@ -371,6 +397,7 @@ var BILI_SETTINGS = (() => {
       textDensity: Object.values(TEXT_DENSITIES).includes(source.textDensity)
         ? source.textDensity
         : DEFAULTS.textDensity,
+      analysisSystemPrompt: normalizeAnalysisSystemPrompt(source.analysisSystemPrompt),
       subtitleLangPreference: normalizeLangPreference(source.subtitleLangPreference),
     };
   }
@@ -416,7 +443,11 @@ var BILI_SETTINGS = (() => {
     ACCENT_THEMES,
     THEME_MODES,
     TEXT_DENSITIES,
+    ANALYSIS_SYSTEM_PROMPT_MAX,
     analysisChunkOptions,
+    normalizeAnalysisSystemPrompt,
+    hasCustomAnalysisSystemPrompt,
+    mergeAnalysisSystemPrompt,
     normalize,
     normalizeUiFontScale,
     applyUiFontScale,

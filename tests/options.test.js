@@ -305,7 +305,10 @@ test("设置页可以导出学习资料备份，且不含密钥", async () => {
 
   const ctx = await createContext();
   await ctx.exportBackup();
-  assert.equal(ctx.sent[0].action, "exportLearningBackup");
+  assert.ok(
+    ctx.sent.some((message) => message.action === "exportLearningBackup"),
+    "应发出 exportLearningBackup",
+  );
   assert.equal(ctx.downloads[0].download, "bilibili-digest-backup.json");
   assert.match(ctx.el("backupStatus").textContent, /1 条笔记/);
 });

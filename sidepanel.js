@@ -1201,11 +1201,27 @@ function renderChapterCard(chapter) {
   title.textContent = chapter.title;
   head.append(time, title);
 
-  const summary = document.createElement("p");
-  summary.className = "entry-text";
-  summary.textContent = chapter.summary;
+  const summaryText = String(chapter.summary || "").trim();
+  let summaryNode;
+  if (summaryText) {
+    const details = document.createElement("details");
+    details.className = "chapter-summary";
+    const summaryLine = document.createElement("summary");
+    summaryLine.className = "chapter-summary-line";
+    summaryLine.textContent = summaryText;
+    const full = document.createElement("p");
+    full.className = "entry-text chapter-summary-full";
+    full.textContent = summaryText;
+    details.append(summaryLine, full);
+    // 展开/折叠不触发章节跳转。
+    details.addEventListener("click", (event) => event.stopPropagation());
+    summaryNode = details;
+  } else {
+    summaryNode = document.createElement("p");
+    summaryNode.className = "entry-text";
+  }
 
-  card.append(head, summary);
+  card.append(head, summaryNode);
   card.addEventListener("click", (event) =>
     onEntryClick(event, chapter.timestampSeconds),
   );

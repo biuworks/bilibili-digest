@@ -135,6 +135,7 @@ const notesService = BILI_NOTES_SERVICE.createNotesService({
   loadPromptSection,
   requestAiCompletion,
   settingsValid: async () => BILI_SETTINGS.validate(await getSettings()).ok,
+  getSettings,
   broadcast: (message) => {
     chrome.runtime.sendMessage(message).catch(() => {});
   },
@@ -599,6 +600,60 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.action === "getAnalysisSystemPromptState") {
+    (async () => {
+      const settings = await getSettings();
+      const custom = BILI_SETTINGS.normalizeAnalysisSystemPrompt(
+        settings.analysisSystemPrompt,
+      );
+      const builtin = await getBuiltinAnalysisSystemPromptText();
+      sendResponse({
+        success: true,
+        customized: Boolean(custom),
+        effective: custom || builtin,
+        builtin,
+        custom,
+      });
+    })().catch((error) =>
+      sendResponse({ success: false, error: error.message }),
+    );
+    return true;
+  }
+
+  if (message?.action === "saveAnalysisSystemPrompt") {
+    (async () => {
+      const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+      const next = BILI_SETTINGS.normalize({
+        ...stored[BILI_SETTINGS.STORAGE_KEY],
+        analysisSystemPrompt: message.prompt,
+      });
+      await chrome.storage.local.set({ [BILI_SETTINGS.STORAGE_KEY]: next });
+      sendResponse({
+        success: true,
+        customized: BILI_SETTINGS.hasCustomAnalysisSystemPrompt(next),
+      });
+    })().catch((error) =>
+      sendResponse({ success: false, error: error.message }),
+    );
+    return true;
+  }
+
+  if (message?.action === "restoreAnalysisSystemPrompt") {
+    (async () => {
+      const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+      const next = BILI_SETTINGS.normalize({
+        ...stored[BILI_SETTINGS.STORAGE_KEY],
+        analysisSystemPrompt: "",
+      });
+      await chrome.storage.local.set({ [BILI_SETTINGS.STORAGE_KEY]: next });
+      const builtin = await getBuiltinAnalysisSystemPromptText();
+      sendResponse({ success: true, customized: false, effective: builtin, builtin });
+    })().catch((error) =>
+      sendResponse({ success: false, error: error.message }),
+    );
+    return true;
+  }
+
   if (message?.action === "exportLearningBackup") {
     notesService
       .exportLearningBackup()
@@ -610,7 +665,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === "importLearningBackup") {
     notesService
       .importLearningBackup(message.backup)
-      .then(sendResponse)
+      .then(async (result) => {
+        if (result?.success && result.analysisSystemPrompt != null) {
+          const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+          const mergedPrompt = BILI_SETTINGS.mergeAnalysisSystemPrompt(
+            stored[BILI_SETTINGS.STORAGE_KEY]?.analysisSystemPrompt,
+            result.analysisSystemPrompt,
+          );
+          const next = BILI_SETTINGS.normalize({
+            ...stored[BILI_SETTINGS.STORAGE_KEY],
+            analysisSystemPrompt: mergedPrompt,
+          });
+          await chrome.storage.local.set({ [BILI_SETTINGS.STORAGE_KEY]: next });
+        }
+        sendResponse(result);
+      })
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
@@ -624,7 +693,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 const promptFileCache = new Map();
 
-async function loadPromptSection(fileName, heading, variables = {}) {
+async function loadBuiltinPromptMarkdown(fileName) {
   let markdown = promptFileCache.get(fileName);
   if (!markdown) {
     const response = await fetch(chrome.runtime.getURL(`prompts/${fileName}`));
@@ -634,7 +703,31 @@ async function loadPromptSection(fileName, heading, variables = {}) {
     markdown = await response.text();
     promptFileCache.set(fileName, markdown);
   }
+  return markdown;
+}
+
+async function loadPromptSection(fileName, heading, variables = {}) {
+  // 仅 analysis 系统提示词允许用户自定义；用户提示词模板（带变量）不开放覆盖。
+  if (fileName === "analysis.md" && heading === "系统提示词") {
+    const settings = await getSettings();
+    const custom = BILI_SETTINGS.normalizeAnalysisSystemPrompt(
+      settings.analysisSystemPrompt,
+    );
+    if (custom) {
+      let prompt = custom;
+      for (const [key, value] of Object.entries(variables || {})) {
+        prompt = prompt.split(`{${key}}`).join(String(value ?? ""));
+      }
+      return prompt;
+    }
+  }
+  const markdown = await loadBuiltinPromptMarkdown(fileName);
   return BILI_AI.extractPromptSection(markdown, heading, variables);
+}
+
+async function getBuiltinAnalysisSystemPromptText() {
+  const markdown = await loadBuiltinPromptMarkdown("analysis.md");
+  return BILI_AI.builtinAnalysisSystemPrompt(markdown);
 }
 
 /**

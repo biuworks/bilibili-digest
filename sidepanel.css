@@ -1046,12 +1046,21 @@ button {
 /* 嵌套在章节卡里的金句：浅粉底、无边框无阴影，像章节里被划出来的重点行。
    跟随章节卡一起浮起，自己不再单独上浮。 */
 .quote.nested {
-  margin: 8px 0 0;
-  padding: 10px 12px;
+  margin: 4px 0 0;
+  padding: 6px 10px;
   background: var(--accent-soft);
   border: none;
   border-radius: var(--radius-sm);
   box-shadow: none;
+}
+
+.quote.nested .entry-text {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.quote.nested .entry-actions {
+  margin-top: 4px;
 }
 
 .quote.nested:hover {
@@ -1094,6 +1103,42 @@ button {
   font-size: 13px;
   font-weight: 600;
   line-height: 1.5;
+}
+
+.chapter .entry-title {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.chapter-summary {
+  margin: 2px 0 0;
+}
+
+.chapter-summary-line {
+  cursor: pointer;
+  list-style: none;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--muted);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  overflow: hidden;
+}
+
+.chapter-summary-line::-webkit-details-marker {
+  display: none;
+}
+
+.chapter-summary[open] .chapter-summary-line {
+  display: none;
+}
+
+.chapter-summary-full {
+  margin-top: 4px;
 }
 
 .entry-text {

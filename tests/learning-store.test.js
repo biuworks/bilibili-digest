@@ -603,3 +603,36 @@ test("概览迁移幂等且跳过坏记录", async () => {
   assert.equal(second.migrated, false);
   assert.equal((await repository.all()).length, 1, "不复活标记设置后的旧数据");
 });
+
+
+test("buildBackup 仅在有自定义时写入 analysisSystemPrompt", () => {
+  const bare = STORE.buildBackup({ notes: [], learning: [] });
+  assert.equal(Object.hasOwn(bare, "analysisSystemPrompt"), false);
+
+  const withCustom = STORE.buildBackup({
+    notes: [],
+    learning: [],
+    analysisSystemPrompt: "  custom system  ",
+  });
+  assert.equal(withCustom.analysisSystemPrompt, "custom system");
+});
+
+test("parseBackup 兼容旧备份（无 analysisSystemPrompt 字段）", () => {
+  const parsed = STORE.parseBackup({
+    kind: "bilibili-digest-backup",
+    schemaVersion: 2,
+    notes: [],
+    learning: [],
+  });
+  assert.equal(parsed.ok, true);
+});
+
+test("parseBackup 拒绝非字符串 analysisSystemPrompt", () => {
+  const parsed = STORE.parseBackup({
+    kind: "bilibili-digest-backup",
+    schemaVersion: 2,
+    notes: [],
+    analysisSystemPrompt: 123,
+  });
+  assert.equal(parsed.ok, false);
+});

@@ -30,6 +30,9 @@ const statusEl = document.getElementById("status");
 
 let statusTimer = null;
 let backupStatusTimer = null;
+let analysisPromptStatusTimer = null;
+let analysisPromptBuiltin = "";
+
 
 // 拉取模型列表 / 测试连接直连用户配置的端点，不走后台的超时与重试；
 // 端点挂起时至少要能自己停下来，不能让状态永远停在「正在…」。
@@ -120,10 +123,11 @@ async function saveAppearance() {
   BILI_SETTINGS.applyAppearance(settings);
 }
 
-function currentSettings() {
+function currentSettings(storedExtras = {}) {
   // 选了具体厂商时不提交协议与地址：这两栏藏着，可能还留着上次自定义的旧值。
   const custom = isCustomPreset();
   return BILI_SETTINGS.normalize({
+    ...storedExtras,
     presetId: fields.preset.value,
     protocol: custom ? fields.protocol.value : undefined,
     aiBaseUrl: custom ? fields.baseUrl.value : undefined,
@@ -265,7 +269,8 @@ function requestHostPermission(origin) {
 // ============================================================
 
 async function save() {
-  const settings = currentSettings();
+  const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+  const settings = currentSettings(stored[BILI_SETTINGS.STORAGE_KEY] || {});
   const check = BILI_SETTINGS.validate(settings);
   if (!check.ok) {
     showStatus(check.errors.join(" "), { sticky: true });
@@ -413,6 +418,90 @@ async function testConnection() {
   }
 }
 
+function showAnalysisPromptStatus(text, { sticky = false } = {}) {
+  const node = document.getElementById("analysisPromptStatus");
+  if (!node) return;
+  node.textContent = text;
+  clearTimeout(analysisPromptStatusTimer);
+  if (!sticky) {
+    analysisPromptStatusTimer = setTimeout(() => {
+      node.textContent = "";
+    }, 4000);
+  }
+}
+
+async function loadAnalysisPromptEditor() {
+  const meta = document.getElementById("analysisPromptMeta");
+  const area = document.getElementById("analysisSystemPrompt");
+  if (!area) return;
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: "getAnalysisSystemPromptState",
+    });
+    if (!result?.success) {
+      showAnalysisPromptStatus(result?.message || result?.error || "加载失败", {
+        sticky: true,
+      });
+      return;
+    }
+    analysisPromptBuiltin = result.builtin || "";
+    area.value = result.effective || "";
+    if (meta) {
+      meta.textContent = result.customized
+        ? "当前：已保存自定义版本（生成将使用此文案）。"
+        : "当前：未自定义，以下为完整内置文案（仅展示，未写入存储）。";
+    }
+  } catch (error) {
+    showAnalysisPromptStatus(`加载失败：${error.message}`, { sticky: true });
+  }
+}
+
+async function saveAnalysisPrompt() {
+  const area = document.getElementById("analysisSystemPrompt");
+  const prompt = area?.value ?? "";
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: "saveAnalysisSystemPrompt",
+      prompt,
+    });
+    if (!result?.success) {
+      showAnalysisPromptStatus(result?.message || result?.error || "保存失败", {
+        sticky: true,
+      });
+      return;
+    }
+    showAnalysisPromptStatus(result.customized ? "已保存自定义提示词。" : "已清除自定义，将使用内置。");
+    await loadAnalysisPromptEditor();
+  } catch (error) {
+    showAnalysisPromptStatus(`保存失败：${error.message}`, { sticky: true });
+  }
+}
+
+async function restoreAnalysisPrompt() {
+  if (
+    !window.confirm(
+      "确认还原为内置概览系统提示词？这将清除已保存的自定义文案，不会删除学习资料。",
+    )
+  ) {
+    return;
+  }
+  try {
+    const result = await chrome.runtime.sendMessage({
+      action: "restoreAnalysisSystemPrompt",
+    });
+    if (!result?.success) {
+      showAnalysisPromptStatus(result?.message || result?.error || "还原失败", {
+        sticky: true,
+      });
+      return;
+    }
+    showAnalysisPromptStatus("已还原为内置提示词。");
+    await loadAnalysisPromptEditor();
+  } catch (error) {
+    showAnalysisPromptStatus(`还原失败：${error.message}`, { sticky: true });
+  }
+}
+
 function showBackupStatus(text, { sticky = false } = {}) {
   const node = document.getElementById("backupStatus");
   node.textContent = text;
@@ -508,6 +597,9 @@ modelOptions.addEventListener("change", () => {
 document.getElementById("saveBtn").addEventListener("click", save);
 document.getElementById("fetchModelsBtn").addEventListener("click", fetchModels);
 document.getElementById("testBtn").addEventListener("click", testConnection);
+document.getElementById("analysisPromptSaveBtn")?.addEventListener("click", saveAnalysisPrompt);
+document.getElementById("analysisPromptRestoreBtn")?.addEventListener("click", restoreAnalysisPrompt);
+
 document.getElementById("backupExportBtn").addEventListener("click", exportBackup);
 document.getElementById("backupImportBtn").addEventListener("click", () => {
   document.getElementById("backupImportInput").click();
@@ -540,3 +632,4 @@ fields.textDensity.addEventListener("change", saveAppearance);
 
 fillSwatches();
 load();
+loadAnalysisPromptEditor();

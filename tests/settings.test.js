@@ -495,3 +495,36 @@ test("除已验证过的 DeepSeek 外，预设不写死模型名", () => {
     );
   }
 });
+
+
+// ============================================================
+// 自定义概览系统提示词
+// ============================================================
+
+test("缺省 normalize 不写入内置全文，analysisSystemPrompt 为空", () => {
+  const normalized = settings.normalize({});
+  assert.equal(normalized.analysisSystemPrompt, "");
+  assert.equal(settings.hasCustomAnalysisSystemPrompt(normalized), false);
+});
+
+test("空白自定义视为未设置", () => {
+  const normalized = settings.normalize({ analysisSystemPrompt: "  \n\t  " });
+  assert.equal(normalized.analysisSystemPrompt, "");
+});
+
+test("合法自定义会被 trim 并保留", () => {
+  const normalized = settings.normalize({
+    analysisSystemPrompt: "  你是概览助手。\n输出 JSON。  ",
+  });
+  assert.equal(normalized.analysisSystemPrompt, "你是概览助手。\n输出 JSON。");
+  assert.equal(settings.hasCustomAnalysisSystemPrompt(normalized), true);
+});
+
+test("备份合并：空字段不冲掉已有自定义", () => {
+  assert.equal(settings.mergeAnalysisSystemPrompt("keep-me", ""), "keep-me");
+  assert.equal(settings.mergeAnalysisSystemPrompt("keep-me", null), "keep-me");
+  assert.equal(
+    settings.mergeAnalysisSystemPrompt("keep-me", "  new-one  "),
+    "new-one",
+  );
+});
