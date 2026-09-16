@@ -136,15 +136,15 @@ Chrome 按这个顺序替换：
 ```text
 store/screenshots/01-transcript.png
 store/screenshots/02-overview.png
-store/screenshots/03-explain.png
-store/screenshots/04-notes-search.png
-store/screenshots/05-learning-export.png
+store/screenshots/03-qa.png
+store/screenshots/04-explain.png
+store/screenshots/05-notes-search.png
 ```
 
 Edge 在上面五张之后追加第 6 张：
 
 ```text
-store/screenshots/06-notes-refine.png
+store/screenshots/06-prompts-manage.png
 ```
 
 Edge 扩展徽标仍用 `store/logo-300.png`，图标仍用 `icons/icon128.png`。
@@ -175,7 +175,7 @@ Edge 扩展徽标仍用 `store/logo-300.png`，图标仍用 `icons/icon128.png`�
 
 1. 打开 [Edge 合作伙伴中心](https://partner.microsoft.com/dashboard) → Digest for Bilibili。
 2. 上传**同一份** zip。
-3. 产品详情里替换详细说明；截图按 01–06 顺序替换（前五张与 Chrome 相同，第 6 张为笔记二次优化）；300×300 徽标不用动。
+3. 产品详情里替换详细说明；截图按 01–06 顺序替换（前五张与 Chrome 相同，第 6 张为提示词管理）；300×300 徽标不用动。
 4. 隐私披露与 Chrome 相同。认证说明栏留空。
 5. 提交审核。
 
@@ -278,7 +278,7 @@ Reads the subtitle track of the Bilibili video the user is currently watching an
 | 问答截图 | 1280×800 | `store/screenshots/03-qa.png` |
 | 划词解释截图 | 1280×800 | `store/screenshots/04-explain.png` |
 | 笔记搜索截图 | 1280×800 | `store/screenshots/05-notes-search.png` |
-| 学习稿导出截图（Edge 追加） | 1280×800 | `store/screenshots/06-learning-export.png` |
+| 提示词管理截图（Edge 追加） | 1280×800 | `store/screenshots/06-prompts-manage.png` |
 
 界面变化后，先跑 `node scripts/capture-sidepanel.js` 重截 README 原图，再运行：
 

@@ -31,6 +31,7 @@ const statusEl = document.getElementById("status");
 let statusTimer = null;
 let backupStatusTimer = null;
 
+
 // 拉取模型列表 / 测试连接直连用户配置的端点，不走后台的超时与重试；
 // 端点挂起时至少要能自己停下来，不能让状态永远停在「正在…」。
 async function fetchWithTimeout(url, init, timeoutMs = 30_000) {
@@ -120,10 +121,11 @@ async function saveAppearance() {
   BILI_SETTINGS.applyAppearance(settings);
 }
 
-function currentSettings() {
+function currentSettings(storedExtras = {}) {
   // 选了具体厂商时不提交协议与地址：这两栏藏着，可能还留着上次自定义的旧值。
   const custom = isCustomPreset();
   return BILI_SETTINGS.normalize({
+    ...storedExtras,
     presetId: fields.preset.value,
     protocol: custom ? fields.protocol.value : undefined,
     aiBaseUrl: custom ? fields.baseUrl.value : undefined,
@@ -265,7 +267,8 @@ function requestHostPermission(origin) {
 // ============================================================
 
 async function save() {
-  const settings = currentSettings();
+  const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+  const settings = currentSettings(stored[BILI_SETTINGS.STORAGE_KEY] || {});
   const check = BILI_SETTINGS.validate(settings);
   if (!check.ok) {
     showStatus(check.errors.join(" "), { sticky: true });
@@ -508,6 +511,7 @@ modelOptions.addEventListener("change", () => {
 document.getElementById("saveBtn").addEventListener("click", save);
 document.getElementById("fetchModelsBtn").addEventListener("click", fetchModels);
 document.getElementById("testBtn").addEventListener("click", testConnection);
+
 document.getElementById("backupExportBtn").addEventListener("click", exportBackup);
 document.getElementById("backupImportBtn").addEventListener("click", () => {
   document.getElementById("backupImportInput").click();

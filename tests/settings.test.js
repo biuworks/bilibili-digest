@@ -495,3 +495,77 @@ test("除已验证过的 DeepSeek 外，预设不写死模型名", () => {
     );
   }
 });
+
+
+// ============================================================
+// 自定义概览系统提示词
+// ============================================================
+
+test("缺省 normalize 不写入内置全文，customSystemPrompts 为空", () => {
+  const normalized = settings.normalize({});
+  assert.deepEqual(normalized.customSystemPrompts, {});
+  assert.equal(settings.hasCustomAnalysisSystemPrompt(normalized), false);
+});
+
+test("空白自定义视为未设置", () => {
+  const normalized = settings.normalize({ analysisSystemPrompt: "  \n\t  " });
+  assert.deepEqual(normalized.customSystemPrompts, {});
+});
+
+test("合法自定义会被 trim 并保留", () => {
+  const normalized = settings.normalize({
+    analysisSystemPrompt: "  你是概览助手。\n输出 JSON。  ",
+  });
+  assert.equal(
+    normalized.customSystemPrompts["analysis.md"],
+    "你是概览助手。\n输出 JSON。",
+  );
+  assert.equal(settings.hasCustomAnalysisSystemPrompt(normalized), true);
+});
+
+test("备份合并：空字段不冲掉已有自定义", () => {
+  assert.equal(settings.mergeAnalysisSystemPrompt("keep-me", ""), "keep-me");
+  assert.equal(settings.mergeAnalysisSystemPrompt("keep-me", null), "keep-me");
+  assert.equal(
+    settings.mergeAnalysisSystemPrompt("keep-me", "  new-one  "),
+    "new-one",
+  );
+});
+
+
+test("customSystemPrompts 缺省为空对象且不写内置全文", () => {
+  const normalized = settings.normalize({});
+  assert.deepEqual(normalized.customSystemPrompts, {});
+  assert.equal(settings.hasCustomSystemPrompt(normalized, "analysis.md"), false);
+});
+
+test("旧字段 analysisSystemPrompt 迁移进 analysis.md", () => {
+  const normalized = settings.normalize({
+    analysisSystemPrompt: "  legacy analysis  ",
+  });
+  assert.equal(normalized.customSystemPrompts["analysis.md"], "legacy analysis");
+  assert.equal(settings.hasCustomSystemPrompt(normalized, "analysis.md"), true);
+});
+
+test("mergeCustomSystemPrompts 空字段不冲掉已有自定义", () => {
+  const merged = settings.mergeCustomSystemPrompts(
+    { "analysis.md": "keep", "qa.md": "qa-keep" },
+    { "analysis.md": "", "qa.md": "qa-new", "explain.md": "ex" },
+  );
+  assert.equal(merged["analysis.md"], "keep");
+  assert.equal(merged["qa.md"], "qa-new");
+  assert.equal(merged["explain.md"], "ex");
+});
+
+test("SYSTEM_PROMPT_CAPABILITIES 覆盖全部内置系统提示词文件", () => {
+  const files = settings.SYSTEM_PROMPT_CAPABILITIES.map((item) => item.file).sort();
+  assert.deepEqual(files, [
+    "analysis.md",
+    "explain.md",
+    "note-cleanup.md",
+    "note-refine.md",
+    "punctuate.md",
+    "qa.md",
+    "translation.md",
+  ].sort());
+});

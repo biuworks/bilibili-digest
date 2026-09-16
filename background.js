@@ -135,6 +135,7 @@ const notesService = BILI_NOTES_SERVICE.createNotesService({
   loadPromptSection,
   requestAiCompletion,
   settingsValid: async () => BILI_SETTINGS.validate(await getSettings()).ok,
+  getSettings,
   broadcast: (message) => {
     chrome.runtime.sendMessage(message).catch(() => {});
   },
@@ -599,6 +600,103 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message?.action === "listSystemPromptStates") {
+    (async () => {
+      const settings = await getSettings();
+      const items = [];
+      for (const cap of BILI_SETTINGS.SYSTEM_PROMPT_CAPABILITIES) {
+        items.push({
+          file: cap.file,
+          id: cap.id,
+          label: cap.label,
+          customized: BILI_SETTINGS.hasCustomSystemPrompt(settings, cap.file),
+        });
+      }
+      sendResponse({ success: true, items });
+    })().catch((error) =>
+      sendResponse({ success: false, error: error.message }),
+    );
+    return true;
+  }
+
+  if (message?.action === "getSystemPromptState") {
+    (async () => {
+      const file = String(message.file || "");
+      if (!BILI_SETTINGS.SYSTEM_PROMPT_FILES.includes(file)) {
+        sendResponse({ success: false, error: "UNKNOWN_PROMPT_FILE" });
+        return;
+      }
+      const settings = await getSettings();
+      const custom = BILI_SETTINGS.getCustomSystemPrompt(settings, file);
+      const builtin = await getBuiltinSystemPromptText(file);
+      sendResponse({
+        success: true,
+        file,
+        customized: Boolean(custom),
+        effective: custom || builtin,
+        builtin,
+        custom,
+      });
+    })().catch((error) =>
+      sendResponse({ success: false, error: error.message }),
+    );
+    return true;
+  }
+
+  if (message?.action === "saveSystemPrompt") {
+    (async () => {
+      const file = String(message.file || "");
+      if (!BILI_SETTINGS.SYSTEM_PROMPT_FILES.includes(file)) {
+        sendResponse({ success: false, error: "UNKNOWN_PROMPT_FILE" });
+        return;
+      }
+      const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+      const current = BILI_SETTINGS.normalize(stored[BILI_SETTINGS.STORAGE_KEY]);
+      const map = { ...current.customSystemPrompts };
+      const nextValue = BILI_SETTINGS.normalizeOneSystemPrompt(message.prompt);
+      if (nextValue) map[file] = nextValue;
+      else delete map[file];
+      const next = BILI_SETTINGS.normalize({
+        ...stored[BILI_SETTINGS.STORAGE_KEY],
+        customSystemPrompts: map,
+        analysisSystemPrompt: undefined,
+      });
+      await chrome.storage.local.set({ [BILI_SETTINGS.STORAGE_KEY]: next });
+      sendResponse({
+        success: true,
+        customized: BILI_SETTINGS.hasCustomSystemPrompt(next, file),
+      });
+    })().catch((error) =>
+      sendResponse({ success: false, error: error.message }),
+    );
+    return true;
+  }
+
+  if (message?.action === "restoreSystemPrompt") {
+    (async () => {
+      const file = String(message.file || "");
+      if (!BILI_SETTINGS.SYSTEM_PROMPT_FILES.includes(file)) {
+        sendResponse({ success: false, error: "UNKNOWN_PROMPT_FILE" });
+        return;
+      }
+      const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+      const current = BILI_SETTINGS.normalize(stored[BILI_SETTINGS.STORAGE_KEY]);
+      const map = { ...current.customSystemPrompts };
+      delete map[file];
+      const next = BILI_SETTINGS.normalize({
+        ...stored[BILI_SETTINGS.STORAGE_KEY],
+        customSystemPrompts: map,
+        analysisSystemPrompt: undefined,
+      });
+      await chrome.storage.local.set({ [BILI_SETTINGS.STORAGE_KEY]: next });
+      const builtin = await getBuiltinSystemPromptText(file);
+      sendResponse({ success: true, customized: false, effective: builtin, builtin });
+    })().catch((error) =>
+      sendResponse({ success: false, error: error.message }),
+    );
+    return true;
+  }
+
   if (message?.action === "exportLearningBackup") {
     notesService
       .exportLearningBackup()
@@ -610,7 +708,29 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === "importLearningBackup") {
     notesService
       .importLearningBackup(message.backup)
-      .then(sendResponse)
+      .then(async (result) => {
+        if (result?.success) {
+          const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+          const current = BILI_SETTINGS.normalize(stored[BILI_SETTINGS.STORAGE_KEY]);
+          let incoming = result.customSystemPrompts;
+          if (incoming == null && result.analysisSystemPrompt != null) {
+            incoming = result.analysisSystemPrompt;
+          }
+          if (incoming != null) {
+            const merged = BILI_SETTINGS.mergeCustomSystemPrompts(
+              current.customSystemPrompts,
+              incoming,
+            );
+            const next = BILI_SETTINGS.normalize({
+              ...stored[BILI_SETTINGS.STORAGE_KEY],
+              customSystemPrompts: merged,
+              analysisSystemPrompt: undefined,
+            });
+            await chrome.storage.local.set({ [BILI_SETTINGS.STORAGE_KEY]: next });
+          }
+        }
+        sendResponse(result);
+      })
       .catch((error) => sendResponse({ success: false, error: error.message }));
     return true;
   }
@@ -624,7 +744,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 const promptFileCache = new Map();
 
-async function loadPromptSection(fileName, heading, variables = {}) {
+async function loadBuiltinPromptMarkdown(fileName) {
   let markdown = promptFileCache.get(fileName);
   if (!markdown) {
     const response = await fetch(chrome.runtime.getURL(`prompts/${fileName}`));
@@ -634,7 +754,29 @@ async function loadPromptSection(fileName, heading, variables = {}) {
     markdown = await response.text();
     promptFileCache.set(fileName, markdown);
   }
+  return markdown;
+}
+
+async function loadPromptSection(fileName, heading, variables = {}) {
+  // 各能力系统提示词可自定义；带变量的用户提示词模板不开放覆盖。
+  if (heading === "系统提示词" && BILI_SETTINGS.SYSTEM_PROMPT_FILES.includes(fileName)) {
+    const settings = await getSettings();
+    const custom = BILI_SETTINGS.getCustomSystemPrompt(settings, fileName);
+    if (custom) {
+      let prompt = custom;
+      for (const [key, value] of Object.entries(variables || {})) {
+        prompt = prompt.split(`{${key}}`).join(String(value ?? ""));
+      }
+      return prompt;
+    }
+  }
+  const markdown = await loadBuiltinPromptMarkdown(fileName);
   return BILI_AI.extractPromptSection(markdown, heading, variables);
+}
+
+async function getBuiltinSystemPromptText(fileName) {
+  const markdown = await loadBuiltinPromptMarkdown(fileName);
+  return BILI_AI.builtinSystemPrompt(markdown);
 }
 
 /**
