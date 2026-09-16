@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>管理提示词 · Digest for Bilibili</title>
+  <link rel="stylesheet" href="theme.css">
+  <link rel="stylesheet" href="prompts.css">
+</head>
+<body>
+  <div class="prompts-app">
+    <header class="prompts-top">
+      <div>
+        <h1>管理提示词</h1>
+        <p class="lede">
+          仅编辑各能力的<strong>系统提示词</strong>。未自定义时右侧显示完整内置文案（不会写入存储）；
+          空白保存或「恢复默认」后回退内置。改坏可能导致对应功能失败。不支持覆盖带变量的用户提示词模板。
+        </p>
+      </div>
+      <a class="ghost-link" href="options.html">← 返回设置</a>
+    </header>
+
+    <div class="prompts-layout">
+      <aside class="prompts-nav" aria-label="能力列表">
+        <ul id="promptNav"></ul>
+      </aside>
+
+      <section class="prompts-editor" aria-label="提示词编辑">
+        <div class="editor-toolbar">
+          <div>
+            <h2 id="promptTitle">—</h2>
+            <p id="promptMeta" class="meta"></p>
+          </div>
+          <div class="editor-actions">
+            <button id="promptSaveBtn" class="primary-btn" type="button">保存</button>
+            <button id="promptRestoreBtn" class="ghost-btn" type="button">恢复默认</button>
+            <span id="promptStatus" class="status" role="status"></span>
+          </div>
+        </div>
+        <textarea id="promptBody" spellcheck="false" placeholder="加载中…"></textarea>
+        <p class="footer-note">切换能力前若有未保存修改会提示确认。还原只清除该项自定义，不影响学习资料与其它能力。</p>
+      </section>
+    </div>
+  </div>
+
+  <script src="settings.js"></script>
+  <script src="lib/ai.js"></script>
+  <script src="prompts.js"></script>
+</body>
+</html>

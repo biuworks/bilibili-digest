@@ -605,16 +605,23 @@ test("概览迁移幂等且跳过坏记录", async () => {
 });
 
 
-test("buildBackup 仅在有自定义时写入 analysisSystemPrompt", () => {
+test("buildBackup 仅在有自定义时写入 customSystemPrompts", () => {
   const bare = STORE.buildBackup({ notes: [], learning: [] });
-  assert.equal(Object.hasOwn(bare, "analysisSystemPrompt"), false);
+  assert.equal(Object.hasOwn(bare, "customSystemPrompts"), false);
 
   const withCustom = STORE.buildBackup({
     notes: [],
     learning: [],
-    analysisSystemPrompt: "  custom system  ",
+    customSystemPrompts: { "analysis.md": "  custom system  " },
   });
-  assert.equal(withCustom.analysisSystemPrompt, "custom system");
+  assert.equal(withCustom.customSystemPrompts["analysis.md"], "custom system");
+
+  const legacy = STORE.buildBackup({
+    notes: [],
+    learning: [],
+    analysisSystemPrompt: "  legacy  ",
+  });
+  assert.equal(legacy.customSystemPrompts["analysis.md"], "legacy");
 });
 
 test("parseBackup 兼容旧备份（无 analysisSystemPrompt 字段）", () => {
@@ -635,4 +642,15 @@ test("parseBackup 拒绝非字符串 analysisSystemPrompt", () => {
     analysisSystemPrompt: 123,
   });
   assert.equal(parsed.ok, false);
+});
+
+
+test("parseBackup 接受 customSystemPrompts 映射", () => {
+  const parsed = STORE.parseBackup({
+    kind: "bilibili-digest-backup",
+    schemaVersion: 2,
+    notes: [],
+    customSystemPrompts: { "qa.md": "hello" },
+  });
+  assert.equal(parsed.ok, true);
 });

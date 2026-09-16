@@ -160,9 +160,9 @@ var BILI_SETTINGS = (() => {
     accentTheme: "pink",
     themeMode: THEME_MODES.SYSTEM,
     textDensity: TEXT_DENSITIES.CLEAR,
-    // 自定义概览「系统提示词」。空字符串=未自定义，运行时读内置 prompts/analysis.md。
+    // 各能力自定义系统提示词：{ "analysis.md": "..." }；缺 key / 空串 = 未自定义。
     // 缺省切勿把内置全文写入存储。
-    analysisSystemPrompt: "",
+    customSystemPrompts: Object.freeze({}),
     // 字幕轨优先级：UP 主中文 > AI 中文 > 英文（见 lib/bili-api.js）。
     subtitleLangPreference: Object.freeze([
       "zh-CN",
@@ -252,27 +252,87 @@ var BILI_SETTINGS = (() => {
     return cleaned.length ? cleaned : [...DEFAULTS.subtitleLangPreference];
   }
 
-  // 空白视为未设置；上限挡住异常超大粘贴，避免撑爆 storage。
-  const ANALYSIS_SYSTEM_PROMPT_MAX = 50000;
-  function normalizeAnalysisSystemPrompt(input) {
+  const SYSTEM_PROMPT_MAX = 50000;
+  const SYSTEM_PROMPT_CAPABILITIES = Object.freeze([
+    Object.freeze({ id: "analysis", file: "analysis.md", label: "概览" }),
+    Object.freeze({ id: "translation", file: "translation.md", label: "翻译" }),
+    Object.freeze({ id: "punctuate", file: "punctuate.md", label: "顺句" }),
+    Object.freeze({ id: "explain", file: "explain.md", label: "划词解释" }),
+    Object.freeze({ id: "note-cleanup", file: "note-cleanup.md", label: "笔记整理" }),
+    Object.freeze({ id: "note-refine", file: "note-refine.md", label: "笔记优化" }),
+    Object.freeze({ id: "qa", file: "qa.md", label: "问答" }),
+  ]);
+  const SYSTEM_PROMPT_FILES = Object.freeze(
+    SYSTEM_PROMPT_CAPABILITIES.map((item) => item.file),
+  );
+
+  function normalizeOneSystemPrompt(input) {
     if (typeof input !== "string") return "";
     const trimmed = input.trim();
     if (!trimmed) return "";
-    return trimmed.slice(0, ANALYSIS_SYSTEM_PROMPT_MAX);
+    return trimmed.slice(0, SYSTEM_PROMPT_MAX);
   }
 
-  function hasCustomAnalysisSystemPrompt(settings = {}) {
-    return Boolean(normalizeAnalysisSystemPrompt(normalize(settings).analysisSystemPrompt));
+  // 兼容旧字段 analysisSystemPrompt → 并入 analysis.md。
+  function normalizeCustomSystemPrompts(source = {}) {
+    const out = {};
+    const rawMap =
+      source && typeof source.customSystemPrompts === "object" && !Array.isArray(source.customSystemPrompts)
+        ? source.customSystemPrompts
+        : {};
+    for (const file of SYSTEM_PROMPT_FILES) {
+      const value = normalizeOneSystemPrompt(rawMap[file]);
+      if (value) out[file] = value;
+    }
+    if (!out["analysis.md"]) {
+      const legacy = normalizeOneSystemPrompt(source.analysisSystemPrompt);
+      if (legacy) out["analysis.md"] = legacy;
+    }
+    return out;
+  }
+
+  function getCustomSystemPrompt(settings, fileName) {
+    const map = normalize(settings).customSystemPrompts;
+    return normalizeOneSystemPrompt(map?.[fileName]);
+  }
+
+  function hasCustomSystemPrompt(settings, fileName) {
+    return Boolean(getCustomSystemPrompt(settings, fileName));
   }
 
   // 备份合并：缺字段或空字符串都不覆盖本机已有自定义。
+  function mergeCustomSystemPrompts(existing, incoming) {
+    const base = normalizeCustomSystemPrompts({ customSystemPrompts: existing || {} });
+    if (incoming == null) return base;
+    if (typeof incoming === "string") {
+      // 旧备份单字段
+      const legacy = normalizeOneSystemPrompt(incoming);
+      if (legacy) base["analysis.md"] = legacy;
+      return base;
+    }
+    if (typeof incoming !== "object" || Array.isArray(incoming)) return base;
+    for (const file of SYSTEM_PROMPT_FILES) {
+      if (!Object.prototype.hasOwnProperty.call(incoming, file)) continue;
+      const next = normalizeOneSystemPrompt(incoming[file]);
+      if (!next) continue; // 空不冲掉
+      base[file] = next;
+    }
+    return base;
+  }
+
+  // 旧 API 兼容（测试/调用方）
+  function normalizeAnalysisSystemPrompt(input) {
+    return normalizeOneSystemPrompt(input);
+  }
+  function hasCustomAnalysisSystemPrompt(settings = {}) {
+    return hasCustomSystemPrompt(settings, "analysis.md");
+  }
   function mergeAnalysisSystemPrompt(existing, incoming) {
-    const current = normalizeAnalysisSystemPrompt(existing);
-    if (incoming == null) return current;
-    if (typeof incoming !== "string") return current;
+    if (incoming == null) return normalizeOneSystemPrompt(existing);
+    if (typeof incoming !== "string") return normalizeOneSystemPrompt(existing);
     const next = incoming.trim();
-    if (!next) return current;
-    return next.slice(0, ANALYSIS_SYSTEM_PROMPT_MAX);
+    if (!next) return normalizeOneSystemPrompt(existing);
+    return next.slice(0, SYSTEM_PROMPT_MAX);
   }
 
   const presetById = (id) => PRESETS.find((preset) => preset.id === id) || null;
@@ -397,7 +457,7 @@ var BILI_SETTINGS = (() => {
       textDensity: Object.values(TEXT_DENSITIES).includes(source.textDensity)
         ? source.textDensity
         : DEFAULTS.textDensity,
-      analysisSystemPrompt: normalizeAnalysisSystemPrompt(source.analysisSystemPrompt),
+      customSystemPrompts: normalizeCustomSystemPrompts(source),
       subtitleLangPreference: normalizeLangPreference(source.subtitleLangPreference),
     };
   }
@@ -443,8 +503,15 @@ var BILI_SETTINGS = (() => {
     ACCENT_THEMES,
     THEME_MODES,
     TEXT_DENSITIES,
-    ANALYSIS_SYSTEM_PROMPT_MAX,
+    SYSTEM_PROMPT_MAX,
+    SYSTEM_PROMPT_CAPABILITIES,
+    SYSTEM_PROMPT_FILES,
     analysisChunkOptions,
+    normalizeOneSystemPrompt,
+    normalizeCustomSystemPrompts,
+    getCustomSystemPrompt,
+    hasCustomSystemPrompt,
+    mergeCustomSystemPrompts,
     normalizeAnalysisSystemPrompt,
     hasCustomAnalysisSystemPrompt,
     mergeAnalysisSystemPrompt,

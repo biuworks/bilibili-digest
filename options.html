@@ -172,22 +172,13 @@
     </section>
 
     <section class="card">
-      <h2>概览系统提示词</h2>
+      <h2>提示词</h2>
       <p class="hint">
-        仅作用于 AI 概览的<strong>系统提示词</strong>。未自定义时显示并使用内置
-        <code>prompts/analysis.md</code>；保存后生成将使用你的版本。
-        空白保存等同还原。不会改写带变量的用户提示词模板，也不会在缺省时把内置全文写入存储。
+        概览、翻译、顺句、划词解释、笔记与问答的<strong>系统提示词</strong>已移至独立页面，便于完整浏览与编辑。
+        未自定义时各能力使用内置文案；缺省不会把内置全文写入存储。
       </p>
-      <p class="hint" id="analysisPromptMeta"></p>
-      <label class="field">
-        <span class="field-label">当前生效文案</span>
-        <textarea id="analysisSystemPrompt" rows="14" spellcheck="false"
-                  placeholder="加载中…"></textarea>
-      </label>
       <div class="actions">
-        <button id="analysisPromptSaveBtn" class="primary-btn" type="button">保存提示词</button>
-        <button id="analysisPromptRestoreBtn" class="ghost-btn" type="button">还原为内置</button>
-        <span id="analysisPromptStatus" class="status" role="status"></span>
+        <a id="openPromptsPage" class="primary-btn" href="prompts.html">管理提示词 →</a>
       </div>
     </section>
 

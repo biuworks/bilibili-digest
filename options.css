@@ -370,3 +370,10 @@ code {
 .swatch-btn.active {
   border-color: var(--text);
 }
+
+
+a.primary-btn {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
