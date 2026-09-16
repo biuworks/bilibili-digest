@@ -7,13 +7,60 @@ Chrome 应用商店与 Edge 加载项共用这一份，改动请两边同步。
 
 | 商店 | 版本 | 上线日期 | 链接 |
 | --- | --- | --- | --- |
-| Chrome Web Store | 0.4.4 提审中（在线 0.4.3） | 0.1.0 2026-08-15 / 0.2.0 2026-08-22 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
-| Microsoft Edge Add-ons | 0.4.4 提审中（在线 0.4.3） | 0.1.0 2026-08-17 / 0.2.0 2026-08-22 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
+| Chrome Web Store | 0.4.5 待提审（在线以商店为准） | 0.1.0 2026-08-15 / 0.2.0 2026-08-22 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
+| Microsoft Edge Add-ons | 0.4.5 待提审（在线以商店为准） | 0.1.0 2026-08-17 / 0.2.0 2026-08-22 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
 
-两个商店用**同一个 zip**。0.4.4 相对 0.4.3 是功能更新：设置页新增外观设置
-（主题色板、明暗模式、文字浓度），播放页上的扩展按钮跟随主题色。提审前先看
-商店后台确认 0.4.3 的状态：若它仍在审核中，上传 0.4.4 会替换待审版本，
-「版本说明」需合并 0.4.3 与 0.4.4 两段摘要。
+两个商店用**同一个 zip**。0.4.5 相对 0.4.4 是功能更新：独立「管理提示词」页可自定义
+各能力系统提示词；概览侧栏章节/摘要/金句展示优化；概览页一级导出学习稿。
+提审前确认商店后台 0.4.4 状态：若仍在审核中，上传 0.4.5 会替换待审版本，
+「版本说明」需合并摘要。
+
+---
+
+## 0.4.5 提交包
+
+先把本仓库推到 GitHub，再点提交：商店里的隐私政策 URL 指向 GitHub 上的 `PRIVACY.md`，不能比安装包旧。
+
+### 安装包
+
+```text
+dist/digest-for-bilibili-0.4.5.zip
+```
+
+Chrome 开发者后台与 Edge 合作伙伴中心上传同一份。本版为功能更新版本，不新增权限。
+
+### 商店截图（1280×800）
+
+第 6 张改为提示词管理（`store/screenshots/06-prompts-manage.png`），其余仍用现有 01–05；上传时 Edge 六张按序替换。Edge 徽标仍用 `store/logo-300.png`，图标仍用 `icons/icon128.png`。
+
+### 后台里要改 / 不用改
+
+| 字段 | 操作 |
+| --- | --- |
+| 安装包 | 上传上面的 zip |
+| 详细说明 | 「版本历史」清单顶部加 0.4.5 一行（已写进下面「详细说明」） |
+| 版本说明 | 贴下面「给审核员的变更摘要」 |
+| 截图 | Edge 第 6 张换为提示词管理；其余视情况保留 |
+| 名称、简短说明、类别、单一用途 | 不用改 |
+| 权限理由 | 不用改（权限集合没变） |
+| 数据披露 | 不用改（仍是 API 密钥 + 网站内容） |
+| 隐私政策 URL | 不用改，但确认 GitHub 上已是最新 `PRIVACY.md` |
+| 远程代码 | 仍选「否」 |
+| 认证说明 | 不用填 |
+
+### 给审核员的变更摘要（可选，有「版本说明」栏再贴）
+
+```text
+0.4.5 为功能更新版本，Chrome 与 Edge 使用同一份 MV3 安装包。
+
+- 新增独立「管理提示词」页：可查看/保存/还原概览、翻译、顺句、划词解释、笔记整理与优化、问答的系统提示词
+- 未自定义时使用内置文案且不把内置全文写入存储；备份兼容旧字段
+- 概览侧栏：章节标题更醒目，摘要默认折叠可展开，金句更紧凑
+- 概览页新增一级「导出学习稿.md」入口
+- 商店第 6 张截图改为提示词管理
+
+权限、主机范围和数据类别与 0.4.4 相同。
+```
 
 ---
 
@@ -241,6 +288,7 @@ Digest for Bilibili 在 B 站播放页旁边打开一个侧边栏，把当前视
 反馈
 Bug 与建议请提交到 https://github.com/biuworks/bilibili-digest/issues
 
+版本 0.4.5 — 独立提示词管理页；概览侧栏与学习稿导出优化；商店第 6 张改为提示词管理
 版本 0.4.4 — 新增主题色板、明暗模式与文字浓度设置；播放页按钮跟随主题色；外观即改即生效
 ```
 
@@ -349,7 +397,7 @@ https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
 - [ ] 已 `git push`，GitHub 上的 `PRIVACY.md` 与本次安装包一致。
 - [ ] 更新 `manifest.json` 版本号和本文件的发布状态。
 - [ ] `npm test` 全部通过。
-- [ ] `npm run package` 得到 `dist/digest-for-bilibili-0.4.4.zip`。
+- [ ] `npm run package` 得到 `dist/digest-for-bilibili-0.4.5.zip`。
 - [ ] ZIP 顶层直接包含 `manifest.json`。
 - [ ] ZIP 不包含测试、截图、README、隐私政策或本文件。
 - [ ] 同一个解压包分别在 Chrome 与 Edge 中旁加载验证。

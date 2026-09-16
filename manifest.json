@@ -2,16 +2,24 @@
   "manifest_version": 3,
   "default_locale": "zh_CN",
   "name": "__MSG_extensionName__",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "minimum_chrome_version": "116",
   "description": "__MSG_extensionDescription__",
-  "permissions": ["sidePanel", "storage", "tabs"],
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "tabs"
+  ],
   "host_permissions": [
     "https://www.bilibili.com/*",
     "https://api.bilibili.com/*",
     "https://*.hdslb.com/*"
   ],
-  "optional_host_permissions": ["https://*/*", "http://localhost/*", "http://127.0.0.1/*"],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -41,7 +49,10 @@
         "https://www.bilibili.com/video/*",
         "https://www.bilibili.com/list/*"
       ],
-      "js": ["settings.js", "content.js"],
+      "js": [
+        "settings.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ]

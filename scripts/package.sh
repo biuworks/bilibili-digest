@@ -21,6 +21,9 @@ FILES=(
   options.html
   options.css
   options.js
+  prompts.html
+  prompts.css
+  prompts.js
   theme.css
   icons/icon16.png
   icons/icon48.png
