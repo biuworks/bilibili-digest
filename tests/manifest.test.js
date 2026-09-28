@@ -184,7 +184,15 @@ test("页面脚本引用的全局模块都有对应的 script 标签", () => {
       (match) => match[1],
     );
     const loadedFiles = new Set(
-      scripts.map((file) => path.posix.normalize(path.join(pageDir, file)).split("/").pop()),
+      // Windows 的 path.join 产生反斜杠，先统一成正斜杠再取文件名。
+      scripts.map((file) =>
+        path
+          .join(pageDir, file)
+          .split(path.sep)
+          .join("/")
+          .split("/")
+          .pop(),
+      ),
     );
 
     const referencedGlobals = new Set();
