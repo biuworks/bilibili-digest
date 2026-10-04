@@ -43,7 +43,9 @@
 使用顺句、翻译、概览、划词解释、笔记整理、笔记二次优化或问答时，相应的字幕文本、
 当前笔记正文、你选中的文字、你的问题和视频标题会随请求发往该服务，并在请求头中携带你的 API 密钥。
 这个地址完全由你决定，可以是任一商业模型服务，也可以是你本机运行的
-推理服务——填本机地址时数据不出设备。可选的服务在设置页的下拉里列出。
+推理服务——填本机地址时数据不出设备。
+如果你填写的是非本机 http 地址，API 密钥和字幕会以明文发出；本机地址的数据仍然不出设备。
+可选的服务在设置页的下拉里列出。
 
 本扩展在安装时只申请 B 站相关域名的权限。AI 服务的域名在安装时无法预知，
 因此通过可选权限在你点击「保存并授权」时按域名单独申请，你可以随时在
@@ -90,6 +92,8 @@ This policy covers both the Chrome and the Edge build — they are the same code
   configure, carrying transcript text, selected text, current note body, your question,
   video title, and your API key in the request header. That endpoint may be a commercial provider or a model server
   running on your own machine, in which case nothing leaves your machine.
+  If you enter a non-loopback HTTP address, your API key and subtitles are sent in
+  plaintext; requests to a loopback address still do not leave the device.
 - **Host permissions**: only Bilibili domains are requested at install time. The AI
   endpoint's domain is unknown at install time and is requested at runtime, per origin,
   via optional permissions, and can be revoked at any time from the browser's extensions page.
