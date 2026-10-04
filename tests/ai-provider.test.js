@@ -465,7 +465,7 @@ test("模型列表为空或畸形时返回空数组", () => {
 // ============================================================
 
 test("地址非法时构造请求直接抛错，不会发出一个坏请求", () => {
-  const broken = { ...openaiSettings, aiBaseUrl: "http://evil.example.com" };
+  const broken = { ...openaiSettings, aiBaseUrl: "ftp://evil.example.com" };
   assert.throws(() => provider.buildChatRequest({ settings: broken, messages: [], maxTokens: 1 }), /地址/);
   assert.throws(() => provider.buildModelsRequest(broken), /地址/);
 });

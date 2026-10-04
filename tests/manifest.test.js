@@ -247,22 +247,17 @@ test("安装时索要的权限只限 B 站，且全部走 https", () => {
   }
 });
 
-test("自定义 AI 地址走可选权限，且明文 http 只对本机放行", () => {
+test("自定义 AI 地址走可选权限，任意 http(s) 服务商都能运行时申请", () => {
   const optional = manifest.optional_host_permissions || [];
   assert.ok(optional.length > 0, "缺少 optional_host_permissions，自定义地址会被 CORS 拦下");
   assert.ok(
     optional.includes("https://*/*"),
     "需要 https://*/* 才能在运行时申请任意 https 服务商",
   );
-
-  for (const host of optional) {
-    if (!host.startsWith("http://")) continue;
-    assert.match(
-      host,
-      /^http:\/\/(localhost|127\.0\.0\.1)\//,
-      `明文 http 只应对本机放行，出现了：${host}`,
-    );
-  }
+  assert.ok(
+    optional.includes("http://*/*"),
+    "需要 http://*/* 才能在运行时申请任意 http 服务商",
+  );
 });
 
 test("内容脚本只注入播放页，不是整个站点", () => {

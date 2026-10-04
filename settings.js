@@ -337,13 +337,14 @@ var BILI_SETTINGS = (() => {
 
   const presetById = (id) => PRESETS.find((preset) => preset.id === id) || null;
 
-  // Chrome 的 match pattern 不支持 IPv6 字面量，0.0.0.0 也不是可申请的
-  // 授权来源——放行只会让用户在「申请权限失败」上走进死胡同（Ollama 在
+  // Chrome 的 match pattern 不支持 IPv6 字面量，这类地址在权限系统里
+  // 申请不到授权——放行只会让用户在「申请权限失败」上走进死胡同（Ollama 在
   // IPv6 机器上的横幅就打印 [::1]）。回环一律引导走 localhost / 127.0.0.1。
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
 
-  // 密钥会随请求发到这个地址，所以这里也是安全边界：明文 http 只对本机放行
-  //（本地推理服务不配证书），其余一律要求 https。
+  // 密钥会随请求发到这个地址。明文 http 不再拦截（内网/远端推理服务可能
+  // 只有 http），改为返回 warning 交由设置页提示风险；唯一保留的硬性拒绝
+  // 是 IPv6 字面量——那是 Chrome 平台申请不到权限，拦下来反而是更清楚的报错。
   function validateBaseUrl(input, protocol = PROTOCOLS.OPENAI) {
     const text = String(input || "").trim();
     if (!text) return { ok: false, error: "请填写 API 地址。" };
@@ -358,12 +359,16 @@ var BILI_SETTINGS = (() => {
     if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
       return { ok: false, error: "API 地址必须以 http:// 或 https:// 开头。" };
     }
-    if (parsed.protocol === "http:" && !LOCAL_HOSTS.has(parsed.hostname)) {
+    if (parsed.hostname.includes(":")) {
       return {
         ok: false,
-        error: "仅本机地址允许使用 http，其余地址须使用 https，否则密钥将以明文传输。",
+        error: "Chrome 的权限系统不支持 IPv6 字面量地址，请改用 localhost 或 127.0.0.1。",
       };
     }
+    const warning =
+      parsed.protocol === "http:" && !LOCAL_HOSTS.has(parsed.hostname)
+        ? "该地址使用明文 http，API 密钥将不经加密传输，有被窃取的风险。"
+        : null;
 
     // 用户常常直接把文档里的完整端点粘进来。与其报错，不如把它还原成 base。
     let pathname = parsed.pathname.replace(/\/+$/, "");
@@ -379,7 +384,9 @@ var BILI_SETTINGS = (() => {
     }
 
     const url = `${parsed.origin}${pathname}`;
-    return { ok: true, url, origin: `${parsed.origin}/` };
+    return warning
+      ? { ok: true, url, origin: `${parsed.origin}/`, warning }
+      : { ok: true, url, origin: `${parsed.origin}/` };
   }
 
   // 申请 host 权限时用的来源，形如 https://api.deepseek.com/。
@@ -474,13 +481,15 @@ var BILI_SETTINGS = (() => {
   function validate(settings) {
     const normalized = normalize(settings);
     const errors = [];
+    const warnings = [];
     if (!normalized.aiApiKey && !isLocalBaseUrl(normalized.aiBaseUrl)) {
       errors.push("请填写 API 密钥。");
     }
     const base = validateBaseUrl(normalized.aiBaseUrl, normalized.protocol);
     if (!base.ok) errors.push(base.error);
+    else if (base.warning) warnings.push(base.warning);
     if (!normalized.aiModel) errors.push("请填写模型名称，或点击「拉取模型列表」进行选择。");
-    return { ok: errors.length === 0, errors, settings: normalized };
+    return { ok: errors.length === 0, errors, warnings, settings: normalized };
   }
 
   // 本地推理服务通常不校验密钥，不该因为密钥为空就拦下来。
