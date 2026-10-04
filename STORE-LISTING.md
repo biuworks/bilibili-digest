@@ -363,7 +363,7 @@ The side panel needs the active tab URL to identify the current Bilibili video a
 ```text
 Install-time hosts are limited to Bilibili: www.bilibili.com is used by the content script on video pages, api.bilibili.com provides video metadata and subtitle-track information, and the hdslb.com CDN serves subtitle JSON files.
 
-The optional hosts are for the AI endpoint selected by the user. The extension requests access to that single origin only when the user clicks Save and authorize. Loopback HTTP is accepted only for local model services; non-loopback HTTP addresses are rejected.
+The optional hosts are for the AI endpoint selected by the user. The extension requests access to that single origin only when the user clicks Save and authorize. Non-loopback HTTP addresses can be saved, but the API key is transmitted in plaintext and the settings page shows a warning.
 ```
 
 **远程代码**：选择“不使用远程代码”。所有 JavaScript 和提示词都随安装包分发；AI
