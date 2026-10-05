@@ -343,8 +343,9 @@ var BILI_SETTINGS = (() => {
   const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1"]);
 
   // 密钥会随请求发到这个地址。明文 http 不再拦截（内网/远端推理服务可能
-  // 只有 http），改为返回 warning 交由设置页提示风险；唯一保留的硬性拒绝
-  // 是 IPv6 字面量——那是 Chrome 平台申请不到权限，拦下来反而是更清楚的报错。
+  // 只有 http），改为返回 warning 交由设置页提示风险；保留硬性拒绝的只有
+  // IPv6 字面量与 0.0.0.0——前者 Chrome 平台申请不到权限，后者是监听地址
+  // 不是访问地址，拦下来给出引导反而是更清楚的报错。
   function validateBaseUrl(input, protocol = PROTOCOLS.OPENAI) {
     const text = String(input || "").trim();
     if (!text) return { ok: false, error: "请填写 API 地址。" };
@@ -363,6 +364,12 @@ var BILI_SETTINGS = (() => {
       return {
         ok: false,
         error: "Chrome 的权限系统不支持 IPv6 字面量地址，请改用 localhost 或 127.0.0.1。",
+      };
+    }
+    if (parsed.hostname === "0.0.0.0") {
+      return {
+        ok: false,
+        error: "0.0.0.0 是监听地址，不是访问地址；本机服务请改用 localhost 或 127.0.0.1。",
       };
     }
     const warning =
