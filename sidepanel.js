@@ -28,6 +28,7 @@ const state = {
   polishRun: 0, // 换视频/切换显示方式时自增，用来作废进行中的批次
   view: "idle", // idle | loading | error | ready
   errorResult: null,
+  requestedLang: "", // 用户点名的字幕语言；重试要沿用，换视频或点刷新则清掉
   tab: "transcript",
     notesScope: "video", // video | all
     notes: [],
@@ -225,18 +226,20 @@ function setView(view, errorResult = null) {
   el("refreshBtn").classList.toggle("spinning", view === "loading");
 
   if (view === "error" && errorResult) {
-    const needLogin = errorResult.error === "NEED_LOGIN";
-    const backgroundDown = errorResult.error === BACKGROUND_UNAVAILABLE;
-    el("errorTitle").textContent = needLogin
-      ? "字幕需要登录"
-      : backgroundDown
-        ? "扩展后台未响应"
-        : "没能取到字幕";
+    el("errorTitle").textContent = describeTranscriptError(errorResult);
     el("errorText").textContent =
       errorResult.message || errorResult.error || "未知错误，请重试。";
-    el("errorLoginLink").hidden = !needLogin;
+    el("errorLoginLink").hidden = errorResult.error !== "NEED_LOGIN";
   }
   render();
+}
+
+function describeTranscriptError(errorResult) {
+  const code = errorResult?.error;
+  if (code === "NEED_LOGIN") return "字幕需要登录";
+  if (code === BACKGROUND_UNAVAILABLE) return "扩展后台未响应";
+  if (code === "NO_SUBTITLE") return "这个视频没有 CC 字幕";
+  return "字幕没有加载出来";
 }
 
 function switchTab(tab) {
@@ -286,6 +289,7 @@ async function syncWithActiveTab({ force = false } = {}) {
   const bvid = parseBvid(tab?.url);
 
   if (!bvid) {
+    state.requestedLang = "";
     state.bvid = null;
     state.data = null;
     state.analysis = null;
@@ -298,7 +302,9 @@ async function syncWithActiveTab({ force = false } = {}) {
   }
 
   const page = parsePage(tab.url);
-  const unchanged = bvid === state.bvid && page === state.page && state.data;
+  const videoChanged = bvid !== state.bvid || page !== state.page;
+  if (videoChanged) state.requestedLang = "";
+  const unchanged = !videoChanged && state.data;
   state.tabId = tab.id;
   state.bvid = bvid;
   state.page = page;
@@ -382,7 +388,11 @@ async function loadTranscript({ force = false, lang = "" } = {}) {
     if (state.bvid !== requestedBvid || state.page !== requestedPage) return;
 
     if (!result?.success) {
-      if (result?.videoInfo) renderMeta(result.videoInfo, null, false);
+      const tracks = Array.isArray(result?.availableTracks) ? result.availableTracks : [];
+      if (result?.videoInfo) {
+        // 多条轨道时把菜单留在错误页上，用户可以换一条，不必先猜是哪一步坏了。
+        renderMeta(result.videoInfo, tracks.length > 1 ? result : null, false);
+      }
       setView("error", result);
       return;
     }
@@ -423,7 +433,11 @@ function subtitleTrackLabel(track) {
 
 function switchSubtitleLang(lang) {
   el("subtitleMenu").open = false;
-  if (!lang || lang === state.data?.language) return undefined;
+  if (!lang) return undefined;
+  // 出错时界面上并没有正在显示这条语言，同语言也要允许再拉一次。
+  const showing = state.view === "ready" ? state.data?.language : "";
+  if (lang === showing) return undefined;
+  state.requestedLang = lang;
   return loadTranscript({ lang });
 }
 
@@ -446,10 +460,12 @@ function renderSubtitleMenu(result) {
 
   badge.hidden = true;
   menu.hidden = false;
-  el("subtitleMenuLabel").textContent = subtitleTrackLabel({
-    langLabel: result.languageLabel || result.language,
-    isAi: result.isAiSubtitle,
-  });
+  el("subtitleMenuLabel").textContent = result.language
+    ? subtitleTrackLabel({
+        langLabel: result.languageLabel || result.language,
+        isAi: result.isAiSubtitle,
+      })
+    : "选择字幕";
 
   const popover = el("subtitleMenuPopover");
   popover.textContent = "";
@@ -457,7 +473,7 @@ function renderSubtitleMenu(result) {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "segmented-btn";
-    button.classList.toggle("active", track.lang === result.language);
+    button.classList.toggle("active", !!result.language && track.lang === result.language);
     button.textContent = subtitleTrackLabel(track);
     button.addEventListener("click", async () => {
       await switchSubtitleLang(track.lang);
@@ -2504,10 +2520,14 @@ function sanitizeFilename(name) {
 
 function setupEventListeners() {
   el("refreshBtn").addEventListener("click", () => {
-    if (state.bvid) loadTranscript({ force: true });
+    if (!state.bvid) return;
+    state.requestedLang = "";
+    loadTranscript({ force: true });
   });
   el("optionsBtn").addEventListener("click", () => chrome.runtime.openOptionsPage());
-  el("errorRetryBtn").addEventListener("click", () => loadTranscript({ force: true }));
+  el("errorRetryBtn").addEventListener("click", () =>
+    loadTranscript({ force: true, lang: state.requestedLang || "" }),
+  );
   el("polishBtn").addEventListener("click", () => {
     el("transcriptProcessMenu").open = false;
     togglePolish();

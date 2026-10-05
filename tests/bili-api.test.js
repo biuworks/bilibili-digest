@@ -121,7 +121,13 @@ test("选轨顺序：按语言偏好，同语言下人工字幕优先于 AI", ()
     { lang: "ai-zh", langLabel: "中文自动", url: "u2", isAi: true },
     { lang: "en-US", langLabel: "英语", url: "u1", isAi: false },
   ];
-  assert.equal(API.pickSubtitleTrack(aiOnly).lang, "ai-zh");
+  assert.equal(API.pickSubtitleTrack(aiOnly).lang, "en-US");
+
+  const bothAi = [
+    { lang: "ai-en", langLabel: "英语自动", url: "e", isAi: true },
+    { lang: "ai-zh", langLabel: "中文自动", url: "z", isAi: true },
+  ];
+  assert.equal(API.pickSubtitleTrack(bothAi).lang, "ai-zh");
 
   const sameLang = [
     { lang: "zh-CN", langLabel: "中文", url: "ai", isAi: true },
@@ -140,6 +146,20 @@ test("自定义语言偏好可以改变选轨结果", () => {
   assert.equal(API.pickSubtitleTrack(tracks, ["en-US", "zh-CN"]).url, "en");
 });
 
+test("UP 主只上传了一种语言时，默认用这种语言", () => {
+  const tracks = [
+    { lang: "zh-Hans", langLabel: "中文（简体）", url: "zh", isAi: false, authorMid: 1 },
+    { lang: "en-US", langLabel: "English", url: "en", isAi: false, authorMid: 2 },
+  ];
+  assert.equal(API.pickSubtitleTrack(tracks, undefined, { ownerMid: 2 }).lang, "en-US");
+
+  const dual = [
+    { lang: "zh-Hans", langLabel: "中文（简体）", url: "zh", isAi: false, authorMid: 7 },
+    { lang: "en", langLabel: "English", url: "en", isAi: false, authorMid: 7 },
+  ];
+  assert.equal(API.pickSubtitleTrack(dual, undefined, { ownerMid: 7 }).lang, "zh-Hans");
+});
+
 test("按语言点名选轨：手动切换字幕语言", () => {
   const tracks = [
     { lang: "zh-CN", langLabel: "中文", url: "zh", isAi: false },
@@ -148,10 +168,42 @@ test("按语言点名选轨：手动切换字幕语言", () => {
   assert.equal(API.pickSubtitleTrackByLang(tracks, "en-US").url, "en");
   assert.equal(API.pickSubtitleTrackByLang(tracks, "zh-CN").url, "zh");
 
-  // 列表里没有这条语言时（风控、列表变化），回退到偏好选择而不是报错。
+  // 列表里没有这条语言时（风控、列表变化），非严格模式回退到偏好选择。
   assert.equal(API.pickSubtitleTrackByLang(tracks, "ja-JP").url, "zh");
   assert.equal(API.pickSubtitleTrackByLang(tracks, "").url, "zh");
   assert.equal(API.pickSubtitleTrackByLang([], "en-US"), null);
+  // 用户点名的语言不在列表里时，严格模式不能静默改回中文。
+  assert.equal(
+    API.pickSubtitleTrackByLang(tracks, "ja-JP", undefined, { strict: true }),
+    null,
+  );
+});
+
+test("已有简体时丢掉中文（中国），不同文件的英文轨都保留", () => {
+  const tracks = API.filterVisibleSubtitleTracks([
+    { lang: "zh-Hans", langLabel: "中文（简体）", url: "https://i0.hdslb.com/bfs/subtitle/zh.json" },
+    { lang: "zh-CN", langLabel: "中文（中国）", url: "https://i0.hdslb.com/bfs/subtitle/alias.json" },
+    { lang: "en", langLabel: "English", url: "https://i0.hdslb.com/bfs/subtitle/en.json" },
+    { lang: "en-US", langLabel: "English(US)", url: "https://i0.hdslb.com/bfs/subtitle/en-us.json" },
+  ]);
+  assert.deepEqual(
+    tracks.map((track) => track.lang),
+    ["zh-Hans", "en", "en-US"],
+  );
+
+  const onlyAlias = API.filterVisibleSubtitleTracks([
+    { lang: "zh-CN", langLabel: "中文（中国）", url: "https://x/only.json" },
+  ]);
+  assert.equal(onlyAlias.length, 1);
+
+  const sameFile = API.filterVisibleSubtitleTracks([
+    { lang: "zh-CN", langLabel: "中文（中国）", url: "https://cdn.example/a.json?auth=1" },
+    { lang: "zh-Hans", langLabel: "中文（简体）", url: "https://cdn.example/a.json" },
+  ]);
+  assert.deepEqual(
+    sameFile.map((track) => track.lang),
+    ["zh-Hans"],
+  );
 });
 
 test("字幕正文转成 {text, start, duration}", () => {
@@ -177,6 +229,7 @@ test("字幕正文缺失时返回空数组", () => {
 
 test("非零业务码映射成带 code 的错误", async () => {
   const cases = [
+    { code: -101, expected: "NEED_LOGIN" },
     { code: -404, expected: "VIDEO_UNAVAILABLE" },
     { code: -403, expected: "FORBIDDEN" },
     { code: -352, expected: "RISK_CONTROL" },
@@ -221,6 +274,8 @@ test("fetchVideoInfo 带上 cookie 并请求正确的地址", async () => {
   const info = await API.fetchVideoInfo(BVID, { fetchImpl });
   assert.match(seenUrl, /x\/web-interface\/view\?bvid=BV1GJ411x7h7$/);
   assert.equal(seenInit.credentials, "include");
+  assert.equal(seenInit.referrer, API.PAGE_REFERRER);
+  assert.equal(seenInit.cache, "no-store");
   assert.equal(info.cid, 2);
 });
 
@@ -294,6 +349,8 @@ test("字幕文件下载不携带 cookie", async () => {
 
   const entries = await API.fetchSubtitleTrackContent("https://x/a.json", { fetchImpl });
   assert.equal(seenInit.credentials, "omit");
+  assert.equal(seenInit.referrer, API.PAGE_REFERRER);
+  assert.equal(seenInit.cache, "default");
   assert.equal(entries[0].text, "hi");
 });
 
@@ -304,5 +361,28 @@ test("字幕文件下载失败给出可识别的错误码", async () => {
         fetchImpl: async () => ({ ok: false, status: 403 }),
       }),
     (error) => error.code === "SUBTITLE_DOWNLOAD_FAILED",
+  );
+});
+
+test("字幕 JSON 的业务码不当成空字幕", async () => {
+  await assert.rejects(
+    () =>
+      API.fetchSubtitleTrackContent("https://x/a.json", {
+        fetchImpl: async () => ({
+          ok: true,
+          json: async () => ({ code: -403, message: "denied" }),
+        }),
+      }),
+    (error) => error.code === "SUBTITLE_DOWNLOAD_FAILED",
+  );
+  await assert.rejects(
+    () =>
+      API.fetchSubtitleTrackContent("https://x/a.json", {
+        fetchImpl: async () => ({
+          ok: true,
+          json: async () => ({ code: -101 }),
+        }),
+      }),
+    (error) => error.code === "NEED_LOGIN",
   );
 });

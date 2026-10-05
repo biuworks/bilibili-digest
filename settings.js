@@ -163,15 +163,16 @@ var BILI_SETTINGS = (() => {
     // 各能力自定义系统提示词：{ "analysis.md": "..." }；缺 key / 空串 = 未自定义。
     // 缺省切勿把内置全文写入存储。
     customSystemPrompts: Object.freeze({}),
-    // 字幕轨优先级：UP 主中文 > AI 中文 > 英文（见 lib/bili-api.js）。
+    // 字幕轨优先级：人工中文 > 人工英文 > AI（见 lib/bili-api.js）。
+    // 有人工轨时选轨会先丢掉 AI，所以机翻中文不会压过人工外文。
     subtitleLangPreference: Object.freeze([
-      "zh-CN",
       "zh-Hans",
       "zh-Hant",
       "zh",
-      "ai-zh",
-      "en-US",
+      "zh-CN",
       "en",
+      "en-US",
+      "ai-zh",
       "ai-en",
     ]),
   });
@@ -501,6 +502,24 @@ var BILI_SETTINGS = (() => {
     }
   }
 
+  // Ollama 默认拒绝 chrome-extension:// 来源，返回空的 403。密钥改不了这件事。
+  function isOllamaOriginBlock(baseUrl, presetId) {
+    return presetId === "ollama" || isLocalBaseUrl(baseUrl);
+  }
+
+  function ollamaOriginNote() {
+    return "本地 Ollama 会拒绝浏览器扩展的来源。请设置 OLLAMA_ORIGINS=chrome-extension://*，然后完全退出并重新启动 Ollama。这与 API 密钥无关。";
+  }
+
+  function ollamaOriginHint() {
+    return [
+      ollamaOriginNote(),
+      "macOS：在终端执行 launchctl setenv OLLAMA_ORIGINS \"chrome-extension://*\"，再从菜单栏退出 Ollama 并重新打开。",
+      "Windows：在系统环境变量中新增 OLLAMA_ORIGINS，值为 chrome-extension://*，然后从托盘退出 Ollama 再打开。",
+      "Linux：启动前 export OLLAMA_ORIGINS=chrome-extension://*，或在 systemd 服务中加入 Environment=OLLAMA_ORIGINS=chrome-extension://* 后重启。",
+    ].join("");
+  }
+
   return {
     STORAGE_KEY,
     PROTOCOLS,
@@ -533,6 +552,9 @@ var BILI_SETTINGS = (() => {
     validate,
     validateBaseUrl,
     isLocalBaseUrl,
+    isOllamaOriginBlock,
+    ollamaOriginNote,
+    ollamaOriginHint,
     originOf,
     presetById,
     chatCompletionsUrl,

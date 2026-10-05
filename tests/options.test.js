@@ -61,7 +61,7 @@ function createElement(tagName = "div") {
   return element;
 }
 
-async function createContext() {
+async function createContext({ fetchImpl } = {}) {
   const elements = new Map();
   const permissionRequests = [];
   const sent = [];
@@ -153,13 +153,13 @@ async function createContext() {
         },
       },
     },
-    fetch: async () => ({
+    fetch: fetchImpl || (async () => ({
       ok: true,
       status: 200,
       json: async () => ({
         data: [{ id: "model-b" }, { id: "model-a" }],
       }),
-    }),
+    })),
     BILI_SETTINGS: settings,
     BILI_AI_PROVIDER: require("../lib/ai-provider.js"),
   };
@@ -296,6 +296,42 @@ test("拉取后在原位置用下拉框替换输入框，不显示两套重复�
   assert.equal(picker.hidden, true);
   assert.equal(ctx.el("aiModel").hidden, false);
   assert.equal(ctx.el("aiModel").focused, true);
+});
+
+test("本地 Ollama 返回 403 时提示放行扩展来源", async () => {
+  const forbidden = async () => ({ ok: false, status: 403, json: async () => ({}) });
+  const ctx = await createContext({ fetchImpl: forbidden });
+  ctx.el("preset").value = "ollama";
+  ctx.el("aiBaseUrl").value = "http://127.0.0.1:11434/v1";
+  ctx.el("aiModel").value = "qwen3";
+  ctx.el("protocol").value = "openai";
+
+  await ctx.el("testBtn").dispatch("click");
+  assert.match(ctx.el("status").textContent, /OLLAMA_ORIGINS/);
+  assert.match(ctx.el("status").textContent, /macOS/);
+  assert.doesNotMatch(ctx.el("status").textContent, /检查密钥|拒绝了这个密钥/);
+
+  await ctx.el("fetchModelsBtn").dispatch("click");
+  assert.match(ctx.el("status").textContent, /OLLAMA_ORIGINS/);
+});
+
+test("远程服务 403 仍显示服务返回的状态，不提示 Ollama", async () => {
+  const ctx = await createContext({
+    fetchImpl: async () => ({ ok: false, status: 403, json: async () => ({}) }),
+  });
+  await ctx.el("testBtn").dispatch("click");
+  assert.match(ctx.el("status").textContent, /服务返回 403/);
+  assert.doesNotMatch(ctx.el("status").textContent, /OLLAMA_ORIGINS/);
+});
+
+test("选择本地 Ollama 时在预设旁说明需要放行扩展来源", async () => {
+  const ctx = await createContext();
+  ctx.el("preset").value = "ollama";
+  await ctx.el("preset").dispatch("change");
+  const text = ctx.el("presetHint").children.map((node) => node.textContent).join("");
+  assert.match(text, /说明文档/);
+  assert.match(text, /OLLAMA_ORIGINS/);
+  assert.doesNotMatch(text, /获取密钥/);
 });
 
 test("设置页可以导出学习资料备份，且不含密钥", async () => {

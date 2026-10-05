@@ -218,7 +218,9 @@
     let overlay = player.querySelector(`#${OVERLAY_ID}`);
     if (overlay?.isConnected) return overlay;
 
-    // 浮动定位需要一个定位上下文，播放器容器默认可能是 static。
+    // 浮动定位需要一个定位上下文。只在仍是 static 时写 inline：
+    // 小窗播放时 B 站会把外层改成 fixed，这里不会覆盖那个定位。
+    // 侧边栏打开后页内小窗不出现，是播放页宽度不够、B 站自己不进小窗，不是按钮挡住的。
     if (getComputedStyle(player).position === "static") {
       player.style.position = "relative";
     }
@@ -307,10 +309,56 @@
     overlay.appendChild(button);
   }
 
+  const MINI_PLAYER_CLASS_TOKENS = [
+    "bpx-state-mini",
+    "bili-mini-player",
+    "mini-player",
+    "mode-miniplayer",
+  ];
+
+  function hasMiniPlayerClass(element) {
+    const tokens = String(element?.className || "").split(/\s+/).filter(Boolean);
+    return MINI_PLAYER_CLASS_TOKENS.some((token) => tokens.includes(token));
+  }
+
+  // 页内小窗的关闭按钮在右上角，和笔记按钮几乎重合。小窗时先藏起浮动层。
+  function isInPageMiniPlayer(player) {
+    if (!player) return false;
+    let node = player;
+    for (let depth = 0; node && depth < 6; depth += 1) {
+      if (hasMiniPlayerClass(node)) return true;
+      node = node.parentElement;
+    }
+    let style = null;
+    try {
+      style = getComputedStyle(player);
+    } catch (error) {
+      return false;
+    }
+    if (style?.position !== "fixed") return false;
+    if (typeof player.getBoundingClientRect !== "function") return false;
+    const box = player.getBoundingClientRect();
+    const width = Number(box?.width) || 0;
+    const height = Number(box?.height) || 0;
+    return width > 0 && width <= 480 && height > 0 && height <= 360;
+  }
+
+  function syncMiniPlayer() {
+    const player = playerContainer();
+    const overlay =
+      player?.querySelector(`#${OVERLAY_ID}`) || document.getElementById(OVERLAY_ID);
+    if (!overlay) return;
+    const mini = isInPageMiniPlayer(player);
+    overlay.hidden = mini;
+    // inline cssText 里写了 display:flex，只改 hidden 盖不住。
+    overlay.style.display = mini ? "none" : "flex";
+  }
+
   function injectButtons() {
     if (!currentBvid()) return;
     injectDigestButton();
     injectNoteButton();
+    syncMiniPlayer();
   }
 
   // ============================================================
@@ -439,6 +487,8 @@
   async function init() {
     // 挂监听不碰 DOM，不会干扰 hydration，可以立刻生效。
     document.addEventListener("keydown", handleKeydown);
+    // 小窗是滚动后才出现的。定时自查兜底，滚动时再立刻让一次位。
+    document.addEventListener("scroll", () => syncMiniPlayer(), true);
     // 主题色读取是异步的，按钮注入要等页面稳定，先后天然错开；不 await。
     watchAccentTheme();
 

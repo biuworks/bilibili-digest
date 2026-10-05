@@ -29,6 +29,8 @@
 字幕取自 B 站官方接口，不经第三方服务。
 
 - 原文 / 译文 / 双语三种视图；中文译英、外文译中，方向按字幕轨语种自动选择
+- 默认先用人工字幕。只有机翻中文、另有人工外文轨时用人工外文；UP 主只上传了一种语言时用那种语言。中英都有人工字幕时仍先用中文
+- 已有简体或繁体时，不展示播放器菜单里没有的地区别名（如「中文（中国）」）
 - 顺句：为 AI 字幕补标点、改同音错别字，不改措辞、不动时间轴
 - 顺句与翻译显示批次进度，可随时停止；已完成内容保留
 - 当前句跟随播放高亮，点一句跳到对应时间；跟丢了有「回到当前句」
@@ -79,6 +81,16 @@ AI 通读字幕，产出带时间戳的章节，金句按时间挂在所属章�
 长视频只把检索命中的片段送给模型，省额度也更快；生成中可以随时停止。问答历史按视频保存，回答可一键复制。笔记和这些资料现在都存进浏览器的 IndexedDB，容量不再受旧存储的上限约束，升级自动迁移。
 
 <img src="imgs/qa.png" width="440" alt="视频问答，结论带可点时间戳">
+
+## 本地 Ollama
+
+选择「本地 Ollama」后，测试连接若出现 403，是 Ollama 拒绝了扩展页面的来源，与 API 密钥无关。默认安装只接受本机页面，不接受 `chrome-extension://`。
+
+启动 Ollama 前设置环境变量 `OLLAMA_ORIGINS=chrome-extension://*`，然后完全退出并重新启动 Ollama（只改变量、不重启不会生效）。
+
+- macOS：终端执行 `launchctl setenv OLLAMA_ORIGINS "chrome-extension://*"`，再从菜单栏退出 Ollama 并重新打开
+- Windows：在系统环境变量中新增 `OLLAMA_ORIGINS`，值为 `chrome-extension://*`，然后从托盘退出 Ollama 再打开
+- Linux：启动前 `export OLLAMA_ORIGINS=chrome-extension://*`，或在 systemd 服务里加上 `Environment=OLLAMA_ORIGINS=chrome-extension://*` 后重启服务
 
 ## 本地加载
 

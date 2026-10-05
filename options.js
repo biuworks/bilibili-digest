@@ -165,17 +165,27 @@ function applyPreset(presetId) {
     fields.model.value = preset.model;
   }
   toggleCustomFields();
+  renderPresetHint(preset);
+  updateEndpointPreview();
+  clearModelOptions();
+}
+
+function renderPresetHint(preset) {
   presetHint.textContent = "";
+  if (!preset) return;
   if (preset.docsUrl) {
     const link = document.createElement("a");
     link.href = preset.docsUrl;
     link.target = "_blank";
     link.rel = "noreferrer";
-    link.textContent = "获取密钥 →";
+    link.textContent = preset.id === "ollama" ? "说明文档 →" : "获取密钥 →";
     presetHint.appendChild(link);
   }
-  updateEndpointPreview();
-  clearModelOptions();
+  if (preset.id === "ollama") {
+    const note = document.createElement("span");
+    note.textContent = ` ${BILI_SETTINGS.ollamaOriginNote()}`;
+    presetHint.appendChild(note);
+  }
 }
 
 function clearModelOptions() {
@@ -244,13 +254,17 @@ async function load() {
 
 // 载入已保存的配置时只补文档链接，不要用预设覆盖用户改过的地址。
 function applyPresetHintOnly(preset) {
-  presetHint.textContent = "";
-  const link = document.createElement("a");
-  link.href = preset.docsUrl;
-  link.target = "_blank";
-  link.rel = "noreferrer";
-  link.textContent = "获取密钥 →";
-  presetHint.appendChild(link);
+  renderPresetHint(preset);
+}
+
+function describeAiHttpFailure(status, data, settings) {
+  if (
+    status === 403 &&
+    BILI_SETTINGS.isOllamaOriginBlock(settings.aiBaseUrl, settings.presetId)
+  ) {
+    return BILI_SETTINGS.ollamaOriginHint();
+  }
+  return BILI_AI_PROVIDER.parseErrorMessage(data, status);
 }
 
 // ============================================================
@@ -346,7 +360,7 @@ async function fetchModels() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       showStatus(
-        `获取失败：${BILI_AI_PROVIDER.parseErrorMessage(data, response.status)}`,
+        `获取失败：${describeAiHttpFailure(response.status, data, settings)}`,
         { sticky: true },
       );
       return;
@@ -400,7 +414,7 @@ async function testConnection() {
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       showStatus(
-        `测试失败：${BILI_AI_PROVIDER.parseErrorMessage(data, response.status)}`,
+        `测试失败：${describeAiHttpFailure(response.status, data, settings)}`,
         { sticky: true },
       );
       return;

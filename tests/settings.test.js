@@ -312,6 +312,19 @@ test("远程服务缺密钥或缺模型都算没配好", () => {
   assert.match(noModel.errors.join(""), /模型/);
 });
 
+test("本地 Ollama 的来源拦截提示与密钥错误分开", () => {
+  assert.equal(settings.isOllamaOriginBlock("http://127.0.0.1:11434/v1", "custom"), true);
+  assert.equal(settings.isOllamaOriginBlock("http://localhost:11434/v1", ""), true);
+  assert.equal(settings.isOllamaOriginBlock("https://api.example.com/v1", "ollama"), true);
+  assert.equal(settings.isOllamaOriginBlock("https://api.example.com/v1", "deepseek"), false);
+  const hint = settings.ollamaOriginHint();
+  assert.match(hint, /OLLAMA_ORIGINS=chrome-extension:\/\/*/);
+  assert.match(hint, /macOS/);
+  assert.match(hint, /Windows/);
+  assert.match(hint, /Linux/);
+  assert.match(hint, /密钥无关/);
+});
+
 test("本地服务允许不填密钥", () => {
   const local = settings.validate({
     presetId: "ollama",
