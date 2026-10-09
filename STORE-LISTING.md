@@ -7,13 +7,63 @@ Chrome 应用商店与 Edge 加载项共用这一份，改动请两边同步。
 
 | 商店 | 版本 | 上线日期 | 链接 |
 | --- | --- | --- | --- |
-| Chrome Web Store | 0.4.5 待提审（在线以商店为准） | 0.1.0 2026-08-15 / 0.2.0 2026-08-22 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
-| Microsoft Edge Add-ons | 0.4.5 待提审（在线以商店为准） | 0.1.0 2026-08-17 / 0.2.0 2026-08-22 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
+| Chrome Web Store | 0.4.6 待提审（在线以商店为准） | 0.1.0 2026-08-15 / 0.2.0 2026-08-22 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
+| Microsoft Edge Add-ons | 0.4.6 待提审（在线以商店为准） | 0.1.0 2026-08-17 / 0.2.0 2026-08-22 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
 
-两个商店用**同一个 zip**。0.4.5 相对 0.4.4 是功能更新：独立「管理提示词」页可自定义
-各能力系统提示词；概览侧栏章节/摘要/金句展示优化；概览页一级导出学习稿。
-提审前确认商店后台 0.4.4 状态：若仍在审核中，上传 0.4.5 会替换待审版本，
+两个商店用**同一个 zip**。0.4.6 相对 0.4.5 是缺陷修复：空中文轨改取有正文的字幕，
+页内小窗时笔记按钮让位，Ollama 403 与明文 http 提示修正。
+提审前确认商店后台 0.4.5 状态：若仍在审核中，上传 0.4.6 会替换待审版本，
 「版本说明」需合并摘要。
+
+---
+
+## 0.4.6 提交包
+
+先把本仓库推到 GitHub，再点提交：商店里的隐私政策 URL 指向 GitHub 上的 `PRIVACY.md`，不能比安装包旧。
+
+### 安装包
+
+```text
+dist/digest-for-bilibili-0.4.6.zip
+```
+
+Chrome 开发者后台与 Edge 合作伙伴中心上传同一份。本版为缺陷修复版本，不新增功能与权限。
+
+### 商店截图（1280×800）
+
+不用改。仍用现有六张（`store/screenshots/01`–`06`），Edge 徽标仍用 `store/logo-300.png`，图标仍用 `icons/icon128.png`。
+
+### 后台里要改 / 不用改
+
+| 字段 | 操作 |
+| --- | --- |
+| 安装包 | 上传上面的 zip |
+| 详细说明 | 「版本历史」清单顶部加 0.4.6 一行（已写进下面「详细说明」） |
+| 版本说明 | 贴下面「给审核员的变更摘要」 |
+| 截图 | 不用改 |
+| 名称、简短说明、类别、单一用途 | 不用改 |
+| 权限理由 | 不用改（权限集合没变） |
+| 数据披露 | 不用改（仍是 API 密钥 + 网站内容） |
+| 隐私政策 URL | 不用改，但确认 GitHub 上已是最新 `PRIVACY.md` |
+| 远程代码 | 仍选「否」 |
+| 认证说明 | 不用填 |
+
+### 给审核员的变更摘要（可选，有「版本说明」栏再贴）
+
+```text
+0.4.6 为缺陷修复版本，Chrome 与 Edge 使用同一份 MV3 安装包。
+
+- 未登录时播放器字幕列表为空，改从字幕 view 接口取轨；空的中文轨会改用同语种里有正文的那条
+- 第一次切换英文仍只请求英文，失败重试不跳回中文
+- 同一字幕文件只保留更具体的语言名，不重复列出「中文（中国）」；文件不同则都保留
+- 「这个视频没有 CC 字幕」与「字幕没有加载出来」分开提示
+- 页内小窗出现时，播放器上的笔记按钮让位，不再挡住小窗的关闭按钮
+- Ollama 测试连接失败改为错误色；拉取模型列表可能成功，但会说明对话和测试连接仍需设置 OLLAMA_ORIGINS
+- 拒绝把 0.0.0.0 当作访问地址，并提示改用 localhost 或 127.0.0.1
+- 明文 http 风险提示补全到保存、拉取模型与测试连接，并随地址显隐
+
+权限、主机范围和数据类别与 0.4.5 相同，商店截图不用换。
+```
 
 ---
 
@@ -288,6 +338,7 @@ Digest for Bilibili 在 B 站播放页旁边打开一个侧边栏，把当前视
 反馈
 Bug 与建议请提交到 https://github.com/biuworks/bilibili-digest/issues
 
+版本 0.4.6 — 空中文轨回退与未登录取轨；页内小窗笔记按钮让位；Ollama 403 与明文 http 提示
 版本 0.4.5 — 独立提示词管理页；概览侧栏与学习稿导出优化；商店第 6 张改为提示词管理
 版本 0.4.4 — 新增主题色板、明暗模式与文字浓度设置；播放页按钮跟随主题色；外观即改即生效
 ```
@@ -397,7 +448,7 @@ https://github.com/biuworks/bilibili-digest/blob/main/PRIVACY.md
 - [ ] 已 `git push`，GitHub 上的 `PRIVACY.md` 与本次安装包一致。
 - [ ] 更新 `manifest.json` 版本号和本文件的发布状态。
 - [ ] `npm test` 全部通过。
-- [ ] `npm run package` 得到 `dist/digest-for-bilibili-0.4.5.zip`。
+- [ ] `npm run package` 得到 `dist/digest-for-bilibili-0.4.6.zip`。
 - [ ] ZIP 顶层直接包含 `manifest.json`。
 - [ ] ZIP 不包含测试、截图、README、隐私政策或本文件。
 - [ ] 同一个解压包分别在 Chrome 与 Edge 中旁加载验证。
