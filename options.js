@@ -24,6 +24,7 @@ const fields = {
 const customFields = document.getElementById("customFields");
 const presetHint = document.getElementById("presetHint");
 const endpointPreview = document.getElementById("endpointPreview");
+const httpRiskHint = document.getElementById("httpRiskHint");
 const modelsHint = document.getElementById("modelsHint");
 const modelOptions = document.getElementById("modelOptions");
 const statusEl = document.getElementById("status");
@@ -56,6 +57,23 @@ function showStatus(text, { sticky = false, tone = "ok" } = {}) {
       statusEl.classList.toggle("is-warn", false);
     }, 4000);
   }
+}
+
+// 明文 http 的风险提示要跟着每个出口走：保存、拉模型、测试连接都发生在
+// 用户刚填完地址之后，只报结果不报风险会漏掉提醒。
+function plaintextWarning(settings) {
+  const base = BILI_SETTINGS.validateBaseUrl(settings.aiBaseUrl, settings.protocol);
+  return base.ok ? base.warning || null : null;
+}
+
+function showStatusWithWarning(text, settings) {
+  const warning = plaintextWarning(settings);
+  if (!warning) {
+    showStatus(text);
+    return;
+  }
+  // 成功文案多为短句，补个句号再接警告，读起来是一整句而不是拼接。
+  showStatus(`${text.replace(/。$/, "")}。${warning}`, { sticky: true });
 }
 
 // ============================================================
@@ -153,6 +171,12 @@ function updateEndpointPreview() {
       : "/chat/completions";
 }
 
+// 明文风险提示只对 http 地址显示，https 用户不必看到与自己无关的警告。
+// 挂在 input 上：粘贴完地址不用失焦就能看到提示跟上。
+function updateHttpRiskHint() {
+  httpRiskHint.hidden = !fields.baseUrl.value.trim().toLowerCase().startsWith("http://");
+}
+
 // 厂商预设的协议与地址是写死的，不摆在界面上占地方。
 function toggleCustomFields() {
   customFields.hidden = !isCustomPreset();
@@ -171,6 +195,7 @@ function applyPreset(presetId) {
   toggleCustomFields();
   renderPresetHint(preset);
   updateEndpointPreview();
+  updateHttpRiskHint();
   clearModelOptions();
 }
 
@@ -254,6 +279,7 @@ async function load() {
   if (preset?.docsUrl) applyPresetHintOnly(preset);
   toggleCustomFields();
   updateEndpointPreview();
+  updateHttpRiskHint();
 }
 
 // 载入已保存的配置时只补文档链接，不要用预设覆盖用户改过的地址。
@@ -289,7 +315,11 @@ async function save() {
   const settings = currentSettings(stored[BILI_SETTINGS.STORAGE_KEY] || {});
   const check = BILI_SETTINGS.validate(settings);
   if (!check.ok) {
-    showStatus(check.errors.join(" "), { sticky: true, tone: "error" });
+    // 校验失败时警告同样有价值：内网 http 没填密钥，错误和明文提示要一起看到。
+    showStatus([...check.errors, ...(check.warnings || [])].join(" "), {
+      sticky: true,
+      tone: "error",
+    });
     return false;
   }
 
@@ -322,12 +352,7 @@ async function save() {
   fields.chunkMode.value = settings.analysisChunkMode;
   fields.overlapChars.value = settings.analysisOverlapChars;
   fields.uiFontScale.value = settings.uiFontScale;
-  showStatus(
-    check.warnings?.length
-      ? `已保存并授权。${check.warnings.join(" ")}`
-      : "已保存并授权",
-    check.warnings?.length ? { sticky: true } : {},
-  );
+  showStatusWithWarning("已保存并授权", settings);
   return true;
 }
 
@@ -385,10 +410,13 @@ async function fetchModels() {
       ? BILI_SETTINGS.ollamaModelsListCaveat()
       : "";
     modelsHint.textContent = `已获取 ${models.length} 个模型，可直接选择或切换为手动填写。${caveat}`;
-    showStatus(caveat ? `模型列表已更新。${caveat}` : "模型列表已更新", {
-      sticky: Boolean(caveat),
-      tone: caveat ? "warn" : "ok",
-    });
+    if (caveat) {
+      const warning = plaintextWarning(settings);
+      const text = `模型列表已更新。${caveat}`;
+      showStatus(warning ? `${text}${warning}` : text, { sticky: true, tone: "warn" });
+    } else {
+      showStatusWithWarning("模型列表已更新", settings);
+    }
   } catch (error) {
     showStatus(
       error?.name === "AbortError"
@@ -403,7 +431,11 @@ async function testConnection() {
   const settings = currentSettings();
   const check = BILI_SETTINGS.validate(settings);
   if (!check.ok) {
-    showStatus(check.errors.join(" "), { sticky: true, tone: "error" });
+    // 与保存一致的规则：失败也要带上明文风险，别让用户只看到密钥报错。
+    showStatus([...check.errors, ...(check.warnings || [])].join(" "), {
+      sticky: true,
+      tone: "error",
+    });
     return;
   }
   if (!(await ensurePermissionInteractive(settings))) {
@@ -433,9 +465,9 @@ async function testConnection() {
     }
 
     const text = BILI_AI_PROVIDER.parseChatResponse(settings.protocol, data);
-    showStatus(
+    showStatusWithWarning(
       text.trim() ? `连接正常，模型返回：${text.trim().slice(0, 30)}` : "连接正常，但返回内容为空。",
-      { sticky: true },
+      settings,
     );
   } catch (error) {
     showStatus(
@@ -528,7 +560,11 @@ fields.protocol.addEventListener("change", () => {
   updateEndpointPreview();
   clearModelOptions();
 });
-fields.baseUrl.addEventListener("change", clearModelOptions);
+fields.baseUrl.addEventListener("change", () => {
+  updateHttpRiskHint();
+  clearModelOptions();
+});
+fields.baseUrl.addEventListener("input", updateHttpRiskHint);
 modelOptions.addEventListener("change", () => {
   if (modelOptions.value) {
     fields.model.value = modelOptions.value;

@@ -82,6 +82,12 @@ test("明文 http 放行：本机无警告，远端给警告不拦截", () => {
 
   // Chrome 权限系统申请不到 IPv6 字面量，仍然拦下。
   assert.equal(settings.validateBaseUrl("http://[::1]:11434/v1").ok, false);
+
+  // 0.0.0.0 是监听地址，不是访问地址，继续硬拒绝并给引导。
+  const zero = settings.validateBaseUrl("http://0.0.0.0:11434/v1");
+  assert.equal(zero.ok, false);
+  assert.match(zero.error, /localhost/);
+  assert.equal(settings.validateBaseUrl("https://0.0.0.0/v1").ok, false);
 });
 
 test("拒绝非 http(s) 协议与非法 URL", () => {

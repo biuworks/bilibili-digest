@@ -61,7 +61,8 @@ function createElement(tagName = "div") {
   return element;
 }
 
-async function createContext({ fetchImpl } = {}) {
+async function createContext(options = {}) {
+  const { fetchImpl, ...storedOverrides } = options;
   const elements = new Map();
   const permissionRequests = [];
   const sent = [];
@@ -119,6 +120,7 @@ async function createContext({ fetchImpl } = {}) {
               aiBaseUrl: "https://api.example.com/v1",
               aiApiKey: "sk-test",
               aiModel: "already-filled-model",
+              ...storedOverrides,
             },
           }),
           set: async (data) => {
@@ -367,4 +369,71 @@ test("设置页可以导出学习资料备份，且不含密钥", async () => {
   );
   assert.equal(ctx.downloads[0].download, "bilibili-digest-backup.json");
   assert.match(ctx.el("backupStatus").textContent, /1 条笔记/);
+});
+
+test("保存成功时明文 http 警告整句随状态栏出现", async () => {
+  const ctx = await createContext({
+    aiBaseUrl: "http://192.168.1.50:8000/v1",
+  });
+
+  await ctx.el("saveBtn").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  // 整句锁定：文案改一个字这里就该跟着改，别让提示悄悄走样。
+  assert.equal(
+    ctx.el("status").textContent,
+    "已保存并授权。该地址使用明文 http，API 密钥将不经加密传输，有被窃取的风险。",
+  );
+});
+
+test("校验失败时明文警告不被丢掉", async () => {
+  const ctx = await createContext({
+    aiBaseUrl: "http://192.168.1.50:8000/v1",
+    aiApiKey: "",
+  });
+
+  await ctx.el("saveBtn").dispatch("click");
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const status = ctx.el("status").textContent;
+  assert.match(status, /请填写 API 密钥。/);
+  assert.match(status, /明文 http/);
+});
+
+test("拉取模型列表与测试连接成功后也提示明文风险", async () => {
+  const ctx = await createContext({
+    aiBaseUrl: "http://192.168.1.50:8000/v1",
+  });
+
+  await ctx.el("fetchModelsBtn").dispatch("click");
+  assert.match(ctx.el("status").textContent, /模型列表已更新。该地址使用明文/);
+
+  await ctx.el("testBtn").dispatch("click");
+  assert.match(ctx.el("status").textContent, /连接正常.*明文 http/);
+});
+
+test("明文风险提示只对 http 地址显示", async () => {
+  const html = fs.readFileSync(path.join(ROOT, "options.html"), "utf8");
+  assert.match(html, /id=["']httpRiskHint["'][^>]*hidden/);
+
+  // 载入 https 自定义地址：提示保持隐藏
+  const httpsCtx = await createContext();
+  assert.equal(httpsCtx.el("httpRiskHint").hidden, true);
+
+  // 载入 http 自定义地址：提示显示
+  const httpCtx = await createContext({
+    aiBaseUrl: "http://192.168.1.50:8000/v1",
+  });
+  assert.equal(httpCtx.el("httpRiskHint").hidden, false);
+
+  // 切到厂商预设（地址回到 https）：提示收起；改回 http 地址又展开
+  httpCtx.el("preset").value = "deepseek";
+  await httpCtx.el("preset").dispatch("change");
+  assert.equal(httpCtx.el("httpRiskHint").hidden, true);
+
+  httpCtx.el("preset").value = "custom";
+  await httpCtx.el("preset").dispatch("change");
+  httpCtx.el("aiBaseUrl").value = "http://localhost:11434/v1";
+  await httpCtx.el("aiBaseUrl").dispatch("input");
+  assert.equal(httpCtx.el("httpRiskHint").hidden, false);
 });
