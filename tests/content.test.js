@@ -38,6 +38,11 @@ function createDom() {
       setAttribute(name, value) {
         this.attributes[name] = String(value);
       },
+      getAttribute(name) {
+        return Object.prototype.hasOwnProperty.call(this.attributes, name)
+          ? this.attributes[name]
+          : null;
+      },
       appendChild(child) {
         this.children.push(child);
         child.isConnected = true;
@@ -120,6 +125,7 @@ function start({
   href = "https://www.bilibili.com/video/BV1xx411c7mD",
   sendMessage = () => Promise.resolve({ success: true }),
   appearance = {},
+  getComputedStyle = () => ({ position: "relative" }),
 }) {
   const intervals = [];
   const runtimeMessageListeners = [];
@@ -132,7 +138,7 @@ function start({
       intervals.push(fn);
       return intervals.length;
     },
-    getComputedStyle: () => ({ position: "relative" }),
+    getComputedStyle,
     location: { href, search: "" },
     window: { addEventListener() {} },
     document: dom.document,
@@ -409,4 +415,132 @@ test("不是播放页时什么都不注入", async () => {
   await run({ dom, href: "https://www.bilibili.com/" });
 
   assert.deepEqual(toolbar.children, []);
+});
+
+test("页内小窗时藏起盖住关闭按钮的笔记层，工具栏 Digest 仍在", async () => {
+  const dom = createDom();
+  const toolbar = dom.register(".video-toolbar-left");
+  const player = dom.register("#bilibili-player");
+  player.className = "bpx-state-mini";
+
+  const { tick } = await run({ dom });
+  const overlay = player.querySelector(`#${OVERLAY_ID}`);
+  assert.equal(overlay.style.display, "none");
+  assert.ok(toolbar.children.some((child) => child.id === DIGEST_ID));
+
+  player.className = "";
+  tick();
+  assert.equal(overlay.style.display, "flex");
+});
+
+test("固定且很小的播放器也视为页内小窗", async () => {
+  const dom = createDom();
+  dom.register(".video-toolbar-left");
+  const player = dom.register("#bilibili-player");
+  player.getBoundingClientRect = () => ({ width: 320, height: 180 });
+
+  const { tick } = await run({
+    dom,
+    getComputedStyle: () => ({ position: "fixed" }),
+  });
+  const overlay = player.querySelector(`#${OVERLAY_ID}`);
+  assert.equal(overlay.style.display, "none");
+
+  player.getBoundingClientRect = () => ({ width: 960, height: 540 });
+  tick();
+  assert.equal(overlay.style.display, "flex");
+});
+
+test("祖先标了 data-screen=mini 时藏起笔记层，笔记层自己可以仍是 static", async () => {
+  const dom = createDom();
+  dom.register(".video-toolbar-left");
+  const primary = dom.register("#bilibili-player .bpx-player-primary-area");
+  const shell = dom.makeElement();
+  shell.setAttribute("data-screen", "normal");
+  primary.parentElement = shell;
+
+  const { tick } = await run({
+    dom,
+    getComputedStyle: () => ({ position: "static" }),
+  });
+  const overlay = primary.querySelector(`#${OVERLAY_ID}`);
+  assert.equal(overlay.style.display, "flex");
+
+  shell.setAttribute("data-screen", "mini");
+  tick();
+  assert.equal(overlay.style.display, "none");
+
+  shell.setAttribute("data-screen", "normal");
+  tick();
+  assert.equal(overlay.style.display, "flex");
+});
+
+test("固定且很小的祖先容器也视为页内小窗", async () => {
+  const dom = createDom();
+  dom.register(".video-toolbar-left");
+  const primary = dom.register("#bilibili-player .bpx-player-primary-area");
+  primary.getBoundingClientRect = () => ({ width: 960, height: 540 });
+  const shell = dom.makeElement();
+  shell.getBoundingClientRect = () => ({ width: 320, height: 180 });
+  primary.parentElement = shell;
+
+  const { tick } = await run({
+    dom,
+    getComputedStyle: (element) => ({ position: element === shell ? "fixed" : "static" }),
+  });
+  const overlay = primary.querySelector(`#${OVERLAY_ID}`);
+  assert.equal(overlay.style.display, "none");
+
+  shell.getBoundingClientRect = () => ({ width: 960, height: 540 });
+  tick();
+  assert.equal(overlay.style.display, "flex");
+});
+
+test("笔记层与小窗关闭按钮重叠时让位，按钮缩成 0 尺寸后恢复", async () => {
+  const dom = createDom();
+  dom.register(".video-toolbar-left");
+  const player = dom.register("#bilibili-player");
+  const closeBtn = dom.register(".bpx-player-mini-close");
+  closeBtn.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: 0,
+    height: 0,
+  });
+
+  const { tick } = await run({ dom });
+  const overlay = player.querySelector(`#${OVERLAY_ID}`);
+  assert.equal(overlay.style.display, "flex");
+
+  overlay.getBoundingClientRect = () => ({
+    left: 200,
+    top: 40,
+    right: 280,
+    bottom: 80,
+    width: 80,
+    height: 40,
+  });
+  closeBtn.getBoundingClientRect = () => ({
+    left: 250,
+    top: 36,
+    right: 278,
+    bottom: 64,
+    width: 28,
+    height: 28,
+  });
+  tick();
+  assert.equal(overlay.style.display, "none");
+
+  closeBtn.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    right: 0,
+    bottom: 0,
+    width: 0,
+    height: 0,
+  });
+  tick();
+  assert.equal(overlay.style.display, "flex");
 });

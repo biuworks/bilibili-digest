@@ -171,6 +171,8 @@ test("无字幕轨区分需要登录与确实没有", async () => {
   });
   const noSubtitle = await baseDeps().service.fetchTranscript(BVID);
   assert.equal(noSubtitle.error, "NO_SUBTITLE");
+  assert.match(noSubtitle.message, /没有 CC 字幕/);
+  assert.match(noSubtitle.message, /烧录字幕/);
 
   // 还原给后续用例。
   globalThis.BILI_API.fetchSubtitleTracks = async () => ({
@@ -256,6 +258,109 @@ test("同语言缓存仍可按 lang 命中", async () => {
   assert.equal(result.success, true);
   assert.equal(result.fromCache, true);
   assert.equal(apiCalls.length, 0);
+});
+
+test("列表暂时为空时用缓存里的轨道地址，不说成没有字幕", async () => {
+  const originalList = globalThis.BILI_API.fetchSubtitleTracks;
+  const originalContent = globalThis.BILI_API.fetchSubtitleTrackContent;
+  apiCalls.length = 0;
+  globalThis.BILI_API.fetchSubtitleTracks = async () => {
+    apiCalls.push("list-empty");
+    return { tracks: [], needLogin: false };
+  };
+  globalThis.BILI_API.fetchSubtitleTrackContent = async (url) => {
+    apiCalls.push(`content:${url}`);
+    return [{ start: 0, duration: 1, text: "English line" }];
+  };
+  try {
+    const cache = makeFakeCache({
+      [`${BVID}:p1`]: {
+        transcript: [{ start: 0, text: "中文" }],
+        language: "zh-CN",
+        videoInfo: { cid: 9, title: "t", ownerMid: 1 },
+        availableTracks: [
+          { lang: "zh-CN", langLabel: "中文", isAi: false, url: "https://subtitle.example/json" },
+          { lang: "en-US", langLabel: "English", isAi: false, url: "https://subtitle.example/en" },
+        ],
+      },
+    });
+    const result = await makeHarness({ cache }).service.fetchTranscript(BVID, { lang: "en-US" });
+    assert.equal(result.success, true);
+    assert.equal(result.error, undefined);
+    assert.equal(result.language, "en-US");
+    assert.match(result.transcriptText, /English line/);
+    assert.equal(apiCalls.includes("list-empty"), false);
+  } finally {
+    globalThis.BILI_API.fetchSubtitleTracks = originalList;
+    globalThis.BILI_API.fetchSubtitleTrackContent = originalContent;
+  }
+});
+
+test("字幕下载失败不会被说成视频没有字幕", async () => {
+  const originalList = globalThis.BILI_API.fetchSubtitleTracks;
+  const originalContent = globalThis.BILI_API.fetchSubtitleTrackContent;
+  globalThis.BILI_API.fetchSubtitleTracks = async () => ({
+    tracks: [
+      { url: "https://subtitle.example/en", lang: "en-US", langLabel: "English", isAi: false },
+    ],
+    needLogin: false,
+  });
+  globalThis.BILI_API.fetchSubtitleTrackContent = async () => {
+    const error = new Error("字幕下载失败（HTTP 403）。");
+    error.code = "SUBTITLE_DOWNLOAD_FAILED";
+    throw error;
+  };
+  try {
+    const result = await baseDeps().service.fetchTranscript(BVID, { lang: "en-US" });
+    assert.equal(result.success, false);
+    assert.equal(result.error, "SUBTITLE_DOWNLOAD_FAILED");
+    assert.ok(Array.isArray(result.availableTracks));
+    assert.match(result.message, /HTTP 403/);
+  } finally {
+    globalThis.BILI_API.fetchSubtitleTracks = originalList;
+    globalThis.BILI_API.fetchSubtitleTrackContent = originalContent;
+  }
+});
+
+test("简体正文为空时改用同语种里有内容的中文（中国），点名英文仍用英文", async () => {
+  const originalList = globalThis.BILI_API.fetchSubtitleTracks;
+  const originalContent = globalThis.BILI_API.fetchSubtitleTrackContent;
+  const originalPick = globalThis.BILI_API.pickSubtitleTrack;
+  const originalByLang = globalThis.BILI_API.pickSubtitleTrackByLang;
+  globalThis.BILI_API.fetchSubtitleTracks = async () => ({
+    tracks: [
+      { url: "https://cdn.example/hans.json", lang: "zh-Hans", langLabel: "中文（简体）", isAi: false },
+      { url: "https://cdn.example/cn.json", lang: "zh-CN", langLabel: "中文（中国）", isAi: false },
+      { url: "https://cdn.example/en.json", lang: "en", langLabel: "English", isAi: false },
+    ],
+    needLogin: false,
+  });
+  globalThis.BILI_API.pickSubtitleTrack = (tracks) =>
+    tracks.find((track) => track.lang === "zh-Hans") || tracks[0];
+  globalThis.BILI_API.pickSubtitleTrackByLang = (tracks, lang) =>
+    tracks.find((track) => track.lang === lang) || null;
+  globalThis.BILI_API.fetchSubtitleTrackContent = async (url) => {
+    if (String(url).includes("cn.json")) return [{ start: 0, duration: 1, text: "德谟克利特" }];
+    if (String(url).includes("en.json")) return [{ start: 0, duration: 1, text: "atoms" }];
+    return [];
+  };
+  try {
+    const chinese = await baseDeps().service.fetchTranscript(BVID);
+    assert.equal(chinese.success, true, chinese.message);
+    assert.equal(chinese.language, "zh-CN");
+    assert.match(chinese.transcriptText, /德谟克利特/);
+
+    const english = await baseDeps().service.fetchTranscript(BVID, { lang: "en" });
+    assert.equal(english.success, true, english.message);
+    assert.equal(english.language, "en");
+    assert.match(english.transcriptText, /atoms/);
+    assert.doesNotMatch(english.transcriptText, /德谟克利特/);
+  } finally {
+    globalThis.BILI_API.fetchSubtitleTracks = originalList;
+    globalThis.BILI_API.fetchSubtitleTrackContent = originalContent;
+    globalThis.BILI_API.pickSubtitleTrack = originalPick;
+    globalThis.BILI_API.pickSubtitleTrackByLang = originalByLang;
+  }
 });
 
 test("网络层错误码原样透出", async () => {

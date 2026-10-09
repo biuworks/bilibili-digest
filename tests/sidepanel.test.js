@@ -121,7 +121,7 @@ function createContext({
     clearTimeout,
     setInterval,
     CSS: { escape: (value) => value },
-    window: { getSelection: () => null, innerWidth: 500 },
+    window: { getSelection: () => null, innerWidth: 500, addEventListener() {} },
     document: {
       getElementById: byId,
       createElement: (tag) => {
@@ -213,7 +213,7 @@ function createContext({
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, loadTranscript, switchSubtitleLang, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground, submitQuestion, onQaButtonClick, switchTab, appendAnswerText };`,
+    `${source}\n;globalThis.__api = { state, loadTranscript, switchSubtitleLang, syncWithActiveTab, setupEventListeners, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground, submitQuestion, onQaButtonClick, switchTab, appendAnswerText };`,
     context,
   );
 
@@ -705,6 +705,7 @@ test("多条字幕轨：徽章变成下拉菜单，点选后切换字幕语言",
 
   assert.equal(ctx.state.isChinese, false, "切到英文字幕应清掉中文态");
   assert.equal(ctx.el("subtitleMenuLabel").textContent, "英语（自动生成） · AI");
+  assert.equal(ctx.state.requestedLang, "en-US");
   const request = [...ctx.sent]
     .reverse()
     .find((message) => message.action === "fetchTranscript");
@@ -728,6 +729,119 @@ test("只有一条字幕轨：照常显示徽章，不出现语言菜单", async
   assert.equal(ctx.el("subtitleMenu").hidden, true);
   assert.equal(ctx.el("subtitleBadge").hidden, false);
   assert.equal(ctx.el("subtitleBadge").textContent, "中文");
+});
+
+test("没有 CC 字幕和加载失败用不同的标题", async () => {
+  const ctx = createContext({
+    transcript: null,
+    replies: {
+      fetchTranscript: async () => ({
+        success: false,
+        error: "NO_SUBTITLE",
+        message: "这个视频没有 CC 字幕（画面里的烧录字幕取不到）。",
+        videoInfo: { title: "无字幕", owner: "UP" },
+      }),
+    },
+  });
+  ctx.state.bvid = "BV1xx411c7mD";
+  await ctx.loadTranscript();
+  assert.equal(ctx.el("errorTitle").textContent, "这个视频没有 CC 字幕");
+  assert.match(ctx.el("errorText").textContent, /烧录字幕/);
+  assert.equal(ctx.el("errorLoginLink").hidden, true);
+
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    ctx.sent.push(message);
+    if (message.action === "fetchTranscript") {
+      return {
+        success: false,
+        error: "SUBTITLE_DOWNLOAD_FAILED",
+        message: "字幕下载失败（HTTP 403）。点重试再取一次。",
+        videoInfo: { title: "t", owner: "UP" },
+        availableTracks: [
+          { lang: "zh-CN", langLabel: "中文", isAi: false },
+          { lang: "en-US", langLabel: "English", isAi: false },
+        ],
+      };
+    }
+    return { success: true };
+  };
+  await ctx.loadTranscript({ force: true });
+  assert.equal(ctx.el("errorTitle").textContent, "字幕没有加载出来");
+  assert.match(ctx.el("errorText").textContent, /HTTP 403/);
+  assert.equal(ctx.el("subtitleMenu").hidden, false);
+  assert.equal(ctx.el("subtitleMenuLabel").textContent, "选择字幕");
+  assert.equal(ctx.el("errorLoginLink").hidden, true);
+
+  ctx.chrome.runtime.sendMessage = async (message) => {
+    ctx.sent.push(message);
+    return {
+      success: false,
+      error: "NEED_LOGIN",
+      message: "该视频的字幕需要登录后才能查看，请先在浏览器里登录 B 站账号。",
+    };
+  };
+  await ctx.loadTranscript({ force: true, lang: "en-US" });
+  assert.equal(ctx.el("errorTitle").textContent, "字幕需要登录");
+  assert.equal(ctx.el("errorLoginLink").hidden, false);
+});
+
+test("重试沿用点过的语言，刷新则重新按默认轨选择", async () => {
+  const ctx = createContext({
+    transcript: null,
+    replies: {
+      fetchTranscript: async (message) => {
+        if (message.lang === "en-US") {
+          return {
+            success: false,
+            error: "SUBTITLE_DOWNLOAD_FAILED",
+            message: "字幕下载失败（HTTP 403）。",
+            videoInfo: { title: "t", owner: "o" },
+            availableTracks: ZHVV_AI_TRACKS,
+          };
+        }
+        return transcriptResult({
+          language: "zh-CN",
+          languageLabel: "中文",
+          isAiSubtitle: false,
+          availableTracks: ZHVV_AI_TRACKS,
+        });
+      },
+    },
+  });
+  ctx.setupEventListeners();
+  ctx.state.bvid = "BV1xx411c7mD";
+  await ctx.loadTranscript();
+  await ctx.el("subtitleMenuPopover").children[2].dispatch("click");
+  assert.equal(ctx.state.requestedLang, "en-US");
+  assert.equal(ctx.el("errorTitle").textContent, "字幕没有加载出来");
+
+  ctx.sent.length = 0;
+  await ctx.el("errorRetryBtn").dispatch("click");
+  const retry = ctx.sent.find((message) => message.action === "fetchTranscript");
+  assert.equal(retry.lang, "en-US");
+  assert.equal(retry.forceRefresh, true);
+
+  ctx.sent.length = 0;
+  await ctx.el("refreshBtn").dispatch("click");
+  const refresh = ctx.sent.find((message) => message.action === "fetchTranscript");
+  assert.equal(refresh.lang, "");
+  assert.equal(refresh.forceRefresh, true);
+  assert.equal(ctx.state.requestedLang, "");
+});
+
+test("换视频后不再沿用上一条字幕语言", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  ctx.state.bvid = "BV1xx411c7mD";
+  ctx.state.page = 1;
+  ctx.state.requestedLang = "en-US";
+  ctx.chrome.tabs.query = async () => [
+    { id: 1, url: "https://www.bilibili.com/video/BV1yy411c7mD" },
+  ];
+  await ctx.syncWithActiveTab();
+  assert.equal(ctx.state.requestedLang, "");
+  assert.equal(ctx.state.bvid, "BV1yy411c7mD");
+  const request = ctx.sent.find((message) => message.action === "fetchTranscript");
+  assert.equal(request.lang, "");
 });
 
 // ============================================================

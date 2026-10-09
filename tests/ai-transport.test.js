@@ -355,6 +355,23 @@ test("HTTP 状态映射成用户能行动的错误码", () => {
   assert.equal(aiError({ status: 429 }).error, "RATE_LIMITED");
   assert.equal(aiError({}).error, "AI_REQUEST_FAILED");
 
+  const local = aiError({ status: 403, baseUrl: "http://127.0.0.1:11434/v1" });
+  assert.equal(local.error, "OLLAMA_ORIGIN_BLOCKED");
+  assert.match(local.message, /OLLAMA_ORIGINS/);
+  assert.match(local.message, /chrome-extension:\/\//);
+
+  const preset = aiError({ status: 403, presetId: "ollama", baseUrl: "https://example.test/v1" });
+  assert.equal(preset.error, "OLLAMA_ORIGIN_BLOCKED");
+
+  assert.equal(
+    aiError({ status: 401, baseUrl: "http://localhost:11434/v1" }).error,
+    "INVALID_AI_KEY",
+  );
+  assert.equal(
+    aiError({ status: 403, baseUrl: "https://api.example.com/v1", presetId: "deepseek" }).error,
+    "INVALID_AI_KEY",
+  );
+
   function aiError(props) {
     return TRANSPORT.aiErrorResponse(Object.assign(new Error("x"), props));
   }
