@@ -520,6 +520,12 @@ var BILI_SETTINGS = (() => {
     ].join("");
   }
 
+  // Chrome 对有 host 权限的扩展，简单 GET（模型列表）不带 Origin，POST 对话会带。
+  // Ollama 只拒绝带了未放行 Origin 的请求，所以列表能成功、测试连接仍 403。
+  function ollamaModelsListCaveat() {
+    return "对话仍需设置 OLLAMA_ORIGINS=chrome-extension://* 并重启 Ollama。拉取列表是不带扩展来源的 GET，测试连接和实际对话会带上 Origin，未放行时会 403。";
+  }
+
   return {
     STORAGE_KEY,
     PROTOCOLS,
@@ -555,6 +561,7 @@ var BILI_SETTINGS = (() => {
     isOllamaOriginBlock,
     ollamaOriginNote,
     ollamaOriginHint,
+    ollamaModelsListCaveat,
     originOf,
     presetById,
     chatCompletionsUrl,

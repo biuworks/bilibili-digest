@@ -179,7 +179,7 @@ test("按语言点名选轨：手动切换字幕语言", () => {
   );
 });
 
-test("已有简体时丢掉中文（中国），不同文件的英文轨都保留", () => {
+test("同一文件的中文（中国）合并掉，不同文件的两条中文都保留", () => {
   const tracks = API.filterVisibleSubtitleTracks([
     { lang: "zh-Hans", langLabel: "中文（简体）", url: "https://i0.hdslb.com/bfs/subtitle/zh.json" },
     { lang: "zh-CN", langLabel: "中文（中国）", url: "https://i0.hdslb.com/bfs/subtitle/alias.json" },
@@ -188,7 +188,20 @@ test("已有简体时丢掉中文（中国），不同文件的英文轨都保�
   ]);
   assert.deepEqual(
     tracks.map((track) => track.lang),
-    ["zh-Hans", "en", "en-US"],
+    ["zh-Hans", "zh-CN", "en", "en-US"],
+  );
+
+  const sharedStub = API.filterVisibleSubtitleTracks([
+    { lang: "zh-Hans", langLabel: "中文（简体）", url: "https://cdn.example/empty.json" },
+    {
+      lang: "en-US",
+      langLabel: "English(US)",
+      url: "https://cdn.example/empty.json?auth_key=2",
+    },
+  ]);
+  assert.deepEqual(
+    sharedStub.map((track) => track.lang),
+    ["zh-Hans", "en-US"],
   );
 
   const onlyAlias = API.filterVisibleSubtitleTracks([
@@ -362,6 +375,94 @@ test("字幕文件下载失败给出可识别的错误码", async () => {
       }),
     (error) => error.code === "SUBTITLE_DOWNLOAD_FAILED",
   );
+});
+
+test("解开 subtitle.bilibili.com 的混淆地址，普通地址只补协议头", () => {
+  const obfuscated =
+    "//subtitle.bilibili.com/S%13%1BP.%1D%28%29X%2CR%5Ej%1F%25w%0E%02H%5EHO4%14%7B4%08K%40%3C%7B%00M%0B%0A%1AM%1A%19%0BI%2A2%14%3C%7D%0F%19MW%16%069%17?auth_key=test";
+  assert.equal(
+    API.decodeObfuscatedSubtitleUrl(obfuscated),
+    "https://aisubtitle.hdslb.com/bfs/subtitle/abc.json?auth_key=test",
+  );
+  assert.equal(
+    API.decodeObfuscatedSubtitleUrl("//i0.hdslb.com/bfs/subtitle/plain.json"),
+    "https://i0.hdslb.com/bfs/subtitle/plain.json",
+  );
+});
+
+function subtitleViewBytes({ lan, lanDoc, url }) {
+  const encodeVarint = (value) => {
+    const bytes = [];
+    let rest = value;
+    while (rest > 127) {
+      bytes.push((rest & 0x7f) | 0x80);
+      rest = Math.floor(rest / 128);
+    }
+    bytes.push(rest);
+    return Buffer.from(bytes);
+  };
+  const field = (number, payload) => {
+    const bytes = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload));
+    return Buffer.concat([
+      encodeVarint((number << 3) | 2),
+      encodeVarint(bytes.length),
+      bytes,
+    ]);
+  };
+  const item = Buffer.concat([field(3, lan), field(4, lanDoc), field(5, url)]);
+  const body = field(3, item);
+  return field(1, body);
+}
+
+test("wbi 字幕列表为空时改读 subtitle/web/view，并解开有正文的中文轨", async () => {
+  const obfuscated =
+    "//subtitle.bilibili.com/S%13%1BP.%1D%28%29X%2CR%5Ej%1F%25w%0E%02H%5EHO4%14%7B4%08K%40%3C%7B%00M%0B%0A%1AM%1A%19%0BI%2A2%14%3C%7D%0F%19MW%16%069%17?auth_key=test";
+  const bytes = subtitleViewBytes({
+    lan: "zh-CN",
+    lanDoc: "中文（中国）",
+    url: obfuscated,
+  });
+  const seen = [];
+  const fetchImpl = async (url) => {
+    seen.push(String(url));
+    if (String(url).includes("subtitle/web/view")) {
+      return {
+        ok: true,
+        arrayBuffer: async () =>
+          bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+      };
+    }
+    return {
+      ok: true,
+      json: async () => ({
+        code: 0,
+        data: {
+          need_login_subtitle: true,
+          subtitle: { subtitles: [] },
+        },
+      }),
+    };
+  };
+  const stubWbi = {
+    fetchWbiKeys: async () => ({ imgKey: "img", subKey: "sub" }),
+    signedUrl: (base, params) =>
+      `${base}?oid=${params.oid || ""}&pid=${params.pid || ""}`,
+  };
+
+  const { tracks, needLogin } = await API.fetchSubtitleTracks(
+    { aid: 9, cid: 8, bvid: BVID },
+    { fetchImpl, wbi: stubWbi },
+  );
+
+  assert.equal(needLogin, false);
+  assert.equal(tracks.length, 1);
+  assert.equal(tracks[0].lang, "zh-CN");
+  assert.equal(tracks[0].langLabel, "中文（中国）");
+  assert.equal(
+    tracks[0].url,
+    "https://aisubtitle.hdslb.com/bfs/subtitle/abc.json?auth_key=test",
+  );
+  assert.ok(seen.some((url) => url.includes("subtitle/web/view") && url.includes("oid=8")));
 });
 
 test("字幕 JSON 的业务码不当成空字幕", async () => {

@@ -44,12 +44,16 @@ async function fetchWithTimeout(url, init, timeoutMs = 30_000) {
   }
 }
 
-function showStatus(text, { sticky = false } = {}) {
+function showStatus(text, { sticky = false, tone = "ok" } = {}) {
   statusEl.textContent = text;
+  statusEl.classList.toggle("is-error", tone === "error");
+  statusEl.classList.toggle("is-warn", tone === "warn");
   clearTimeout(statusTimer);
   if (!sticky) {
     statusTimer = setTimeout(() => {
       statusEl.textContent = "";
+      statusEl.classList.toggle("is-error", false);
+      statusEl.classList.toggle("is-warn", false);
     }, 4000);
   }
 }
@@ -285,13 +289,13 @@ async function save() {
   const settings = currentSettings(stored[BILI_SETTINGS.STORAGE_KEY] || {});
   const check = BILI_SETTINGS.validate(settings);
   if (!check.ok) {
-    showStatus(check.errors.join(" "), { sticky: true });
+    showStatus(check.errors.join(" "), { sticky: true, tone: "error" });
     return false;
   }
 
   const origin = BILI_SETTINGS.originOf(settings.aiBaseUrl);
   if (!origin) {
-    showStatus("API 地址不合法。", { sticky: true });
+    showStatus("API 地址不合法。", { sticky: true, tone: "error" });
     return false;
   }
 
@@ -300,12 +304,13 @@ async function save() {
   try {
     granted = await requestHostPermission(origin);
   } catch (error) {
-    showStatus(`申请权限失败：${error.message}`, { sticky: true });
+    showStatus(`申请权限失败：${error.message}`, { sticky: true, tone: "error" });
     return false;
   }
   if (!granted) {
     showStatus(`未获得 ${origin} 的访问权限，AI 功能将无法使用。`, {
       sticky: true,
+      tone: "error",
     });
     return false;
   }
@@ -333,7 +338,7 @@ async function save() {
 function ensurePermissionInteractive(settings) {
   const origin = BILI_SETTINGS.originOf(settings.aiBaseUrl);
   if (!origin) {
-    showStatus("API 地址不合法。", { sticky: true });
+    showStatus("API 地址不合法。", { sticky: true, tone: "error" });
     return Promise.resolve(false);
   }
   // request 必须直接发生在点击调用栈里。已授权的来源会直接返回 true，
@@ -345,11 +350,11 @@ async function fetchModels() {
   const settings = currentSettings();
   const base = BILI_SETTINGS.validateBaseUrl(settings.aiBaseUrl, settings.protocol);
   if (!base.ok) {
-    showStatus(base.error, { sticky: true });
+    showStatus(base.error, { sticky: true, tone: "error" });
     return;
   }
   if (!(await ensurePermissionInteractive(settings))) {
-    showStatus("需获得授权后才能访问该地址。", { sticky: true });
+    showStatus("需获得授权后才能访问该地址。", { sticky: true, tone: "error" });
     return;
   }
 
@@ -361,28 +366,35 @@ async function fetchModels() {
     if (!response.ok) {
       showStatus(
         `获取失败：${describeAiHttpFailure(response.status, data, settings)}`,
-        { sticky: true },
+        { sticky: true, tone: "error" },
       );
       return;
     }
 
     const models = BILI_AI_PROVIDER.parseModelsResponse(data);
     if (!models.length) {
-      showStatus("服务未返回模型列表，请手动填写模型名称。", { sticky: true });
+      showStatus("服务未返回模型列表，请手动填写模型名称。", { sticky: true, tone: "error" });
       return;
     }
 
     // 还没填模型时顺手填第一个，省得用户再去翻列表。
     if (!fields.model.value) fields.model.value = models[0];
     showModelOptions(models);
-    modelsHint.textContent = `已获取 ${models.length} 个模型，可直接选择或切换为手动填写。`;
-    showStatus("模型列表已更新");
+    // GET /v1/models 成功不代表 POST /v1/chat/completions 也能过 Ollama 的 Origin 检查。
+    const caveat = BILI_SETTINGS.isOllamaOriginBlock(settings.aiBaseUrl, settings.presetId)
+      ? BILI_SETTINGS.ollamaModelsListCaveat()
+      : "";
+    modelsHint.textContent = `已获取 ${models.length} 个模型，可直接选择或切换为手动填写。${caveat}`;
+    showStatus(caveat ? `模型列表已更新。${caveat}` : "模型列表已更新", {
+      sticky: Boolean(caveat),
+      tone: caveat ? "warn" : "ok",
+    });
   } catch (error) {
     showStatus(
       error?.name === "AbortError"
         ? "获取超时（30 秒），请检查服务地址或稍后再试。"
         : `获取失败：${error.message}。请检查接口地址与网络连接。`,
-      { sticky: true },
+      { sticky: true, tone: "error" },
     );
   }
 }
@@ -391,11 +403,11 @@ async function testConnection() {
   const settings = currentSettings();
   const check = BILI_SETTINGS.validate(settings);
   if (!check.ok) {
-    showStatus(check.errors.join(" "), { sticky: true });
+    showStatus(check.errors.join(" "), { sticky: true, tone: "error" });
     return;
   }
   if (!(await ensurePermissionInteractive(settings))) {
-    showStatus("需获得授权后才能访问该地址。", { sticky: true });
+    showStatus("需获得授权后才能访问该地址。", { sticky: true, tone: "error" });
     return;
   }
 
@@ -415,7 +427,7 @@ async function testConnection() {
     if (!response.ok) {
       showStatus(
         `测试失败：${describeAiHttpFailure(response.status, data, settings)}`,
-        { sticky: true },
+        { sticky: true, tone: "error" },
       );
       return;
     }
@@ -430,7 +442,7 @@ async function testConnection() {
       error?.name === "AbortError"
         ? "测试超时（30 秒），请检查服务地址或稍后再试。"
         : `测试失败：${error.message}。请检查接口地址、协议与网络连接。`,
-      { sticky: true },
+      { sticky: true, tone: "error" },
     );
   }
 }

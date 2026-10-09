@@ -321,26 +321,72 @@
     return MINI_PLAYER_CLASS_TOKENS.some((token) => tokens.includes(token));
   }
 
-  // 页内小窗的关闭按钮在右上角，和笔记按钮几乎重合。小窗时先藏起浮动层。
-  function isInPageMiniPlayer(player) {
-    if (!player) return false;
-    let node = player;
-    for (let depth = 0; node && depth < 6; depth += 1) {
-      if (hasMiniPlayerClass(node)) return true;
-      node = node.parentElement;
+  function elementRect(element) {
+    if (!element || typeof element.getBoundingClientRect !== "function") return null;
+    try {
+      return element.getBoundingClientRect();
+    } catch (error) {
+      return null;
     }
+  }
+
+  function rectsOverlap(a, b) {
+    if (!a || !b) return false;
+    const aw = Number(a.width) || 0;
+    const ah = Number(a.height) || 0;
+    const bw = Number(b.width) || 0;
+    const bh = Number(b.height) || 0;
+    if (aw <= 0 || ah <= 0 || bw <= 0 || bh <= 0) return false;
+    const aLeft = Number(a.left) || 0;
+    const aTop = Number(a.top) || 0;
+    const bLeft = Number(b.left) || 0;
+    const bTop = Number(b.top) || 0;
+    const aRight = Number.isFinite(Number(a.right)) ? Number(a.right) : aLeft + aw;
+    const aBottom = Number.isFinite(Number(a.bottom)) ? Number(a.bottom) : aTop + ah;
+    const bRight = Number.isFinite(Number(b.right)) ? Number(b.right) : bLeft + bw;
+    const bBottom = Number.isFinite(Number(b.bottom)) ? Number(b.bottom) : bTop + bh;
+    return aLeft < bRight && aRight > bLeft && aTop < bBottom && aBottom > bTop;
+  }
+
+  // 当前播放器进小窗时，标记打在 .bpx-player-container 的 data-screen="mini" 上，
+  // 那一层变成 position:fixed、约 320×180。.bpx-player-primary-area（笔记层的父节点）
+  // 仍是 static，也不会带 bpx-state-mini。只查笔记层自己的 class / position 会漏。
+  function isFixedMiniBox(element) {
     let style = null;
     try {
-      style = getComputedStyle(player);
+      style = getComputedStyle(element);
     } catch (error) {
       return false;
     }
     if (style?.position !== "fixed") return false;
-    if (typeof player.getBoundingClientRect !== "function") return false;
-    const box = player.getBoundingClientRect();
+    const box = elementRect(element);
     const width = Number(box?.width) || 0;
     const height = Number(box?.height) || 0;
     return width > 0 && width <= 480 && height > 0 && height <= 360;
+  }
+
+  function isInPageMiniPlayer(player) {
+    if (!player) return false;
+    let node = player;
+    for (let depth = 0; node && depth < 8; depth += 1) {
+      if (hasMiniPlayerClass(node)) return true;
+      const screen = String(
+        node.getAttribute?.("data-screen") || node.dataset?.screen || "",
+      ).toLowerCase();
+      if (screen === "mini") return true;
+      if (isFixedMiniBox(node)) return true;
+      node = node.parentElement;
+    }
+    return false;
+  }
+
+  // 关闭按钮 .bpx-player-mini-close 平时宽高为 0。和小窗笔记层矩形重叠时让位。
+  function coversMiniClose(overlay) {
+    const closeBtn = document.querySelector(".bpx-player-mini-close");
+    const closeBox = elementRect(closeBtn);
+    if (!closeBox) return false;
+    const note = document.getElementById(NOTE_BUTTON_ID);
+    return rectsOverlap(elementRect(overlay), closeBox) || rectsOverlap(elementRect(note), closeBox);
   }
 
   function syncMiniPlayer() {
@@ -348,16 +394,37 @@
     const overlay =
       player?.querySelector(`#${OVERLAY_ID}`) || document.getElementById(OVERLAY_ID);
     if (!overlay) return;
-    const mini = isInPageMiniPlayer(player);
+    const mini = isInPageMiniPlayer(player) || coversMiniClose(overlay);
     overlay.hidden = mini;
     // inline cssText 里写了 display:flex，只改 hidden 盖不住。
     overlay.style.display = mini ? "none" : "flex";
+  }
+
+  let miniObserver = null;
+  let miniObserverRoot = null;
+
+  // 只观察播放器容器的 class / data-screen。弹幕在更里面改文本，不会触发这里。
+  function watchMiniPlayer() {
+    if (typeof MutationObserver !== "function") return;
+    const root =
+      document.querySelector(".bpx-player-container") ||
+      document.querySelector("#bilibili-player") ||
+      playerContainer();
+    if (!root || miniObserverRoot === root) return;
+    miniObserver?.disconnect?.();
+    miniObserverRoot = root;
+    miniObserver = new MutationObserver(() => syncMiniPlayer());
+    miniObserver.observe(root, {
+      attributes: true,
+      attributeFilter: ["class", "data-screen"],
+    });
   }
 
   function injectButtons() {
     if (!currentBvid()) return;
     injectDigestButton();
     injectNoteButton();
+    watchMiniPlayer();
     syncMiniPlayer();
   }
 

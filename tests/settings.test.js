@@ -323,6 +323,7 @@ test("本地 Ollama 的来源拦截提示与密钥错误分开", () => {
   assert.match(hint, /Windows/);
   assert.match(hint, /Linux/);
   assert.match(hint, /密钥无关/);
+  assert.match(settings.ollamaModelsListCaveat(), /对话仍需设置 OLLAMA_ORIGINS/);
 });
 
 test("本地服务允许不填密钥", () => {

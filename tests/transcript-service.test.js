@@ -322,6 +322,47 @@ test("字幕下载失败不会被说成视频没有字幕", async () => {
   }
 });
 
+test("简体正文为空时改用同语种里有内容的中文（中国），点名英文仍用英文", async () => {
+  const originalList = globalThis.BILI_API.fetchSubtitleTracks;
+  const originalContent = globalThis.BILI_API.fetchSubtitleTrackContent;
+  const originalPick = globalThis.BILI_API.pickSubtitleTrack;
+  const originalByLang = globalThis.BILI_API.pickSubtitleTrackByLang;
+  globalThis.BILI_API.fetchSubtitleTracks = async () => ({
+    tracks: [
+      { url: "https://cdn.example/hans.json", lang: "zh-Hans", langLabel: "中文（简体）", isAi: false },
+      { url: "https://cdn.example/cn.json", lang: "zh-CN", langLabel: "中文（中国）", isAi: false },
+      { url: "https://cdn.example/en.json", lang: "en", langLabel: "English", isAi: false },
+    ],
+    needLogin: false,
+  });
+  globalThis.BILI_API.pickSubtitleTrack = (tracks) =>
+    tracks.find((track) => track.lang === "zh-Hans") || tracks[0];
+  globalThis.BILI_API.pickSubtitleTrackByLang = (tracks, lang) =>
+    tracks.find((track) => track.lang === lang) || null;
+  globalThis.BILI_API.fetchSubtitleTrackContent = async (url) => {
+    if (String(url).includes("cn.json")) return [{ start: 0, duration: 1, text: "德谟克利特" }];
+    if (String(url).includes("en.json")) return [{ start: 0, duration: 1, text: "atoms" }];
+    return [];
+  };
+  try {
+    const chinese = await baseDeps().service.fetchTranscript(BVID);
+    assert.equal(chinese.success, true, chinese.message);
+    assert.equal(chinese.language, "zh-CN");
+    assert.match(chinese.transcriptText, /德谟克利特/);
+
+    const english = await baseDeps().service.fetchTranscript(BVID, { lang: "en" });
+    assert.equal(english.success, true, english.message);
+    assert.equal(english.language, "en");
+    assert.match(english.transcriptText, /atoms/);
+    assert.doesNotMatch(english.transcriptText, /德谟克利特/);
+  } finally {
+    globalThis.BILI_API.fetchSubtitleTracks = originalList;
+    globalThis.BILI_API.fetchSubtitleTrackContent = originalContent;
+    globalThis.BILI_API.pickSubtitleTrack = originalPick;
+    globalThis.BILI_API.pickSubtitleTrackByLang = originalByLang;
+  }
+});
+
 test("网络层错误码原样透出", async () => {
   globalThis.BILI_API.fetchVideoInfo = async () => {
     const error = new Error("风控了");

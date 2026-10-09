@@ -310,9 +310,29 @@ test("本地 Ollama 返回 403 时提示放行扩展来源", async () => {
   assert.match(ctx.el("status").textContent, /OLLAMA_ORIGINS/);
   assert.match(ctx.el("status").textContent, /macOS/);
   assert.doesNotMatch(ctx.el("status").textContent, /检查密钥|拒绝了这个密钥/);
+  assert.equal(ctx.el("status").classList.contains("is-error"), true);
 
   await ctx.el("fetchModelsBtn").dispatch("click");
   assert.match(ctx.el("status").textContent, /OLLAMA_ORIGINS/);
+  assert.equal(ctx.el("status").classList.contains("is-error"), true);
+});
+
+test("本地 Ollama 拉到模型列表时仍提示对话需要放行来源", async () => {
+  const ctx = await createContext();
+  ctx.el("preset").value = "ollama";
+  await ctx.el("fetchModelsBtn").dispatch("click");
+  assert.match(ctx.el("modelsHint").textContent, /已获取 2 个模型/);
+  assert.match(ctx.el("status").textContent, /对话仍需设置 OLLAMA_ORIGINS/);
+  assert.equal(ctx.el("status").classList.contains("is-warn"), true);
+  assert.equal(ctx.el("status").classList.contains("is-error"), false);
+});
+
+test("设置页把长状态放到按钮行下方，失败用错误色", () => {
+  const css = fs.readFileSync(path.join(ROOT, "options.css"), "utf8");
+  assert.match(css, /\.actions\s*\{[^}]*flex-wrap:\s*wrap/);
+  assert.match(css, /\.status\s*\{[^}]*flex:\s*1 0 100%/);
+  assert.match(css, /\.status\.is-error\s*\{[^}]*var\(--danger\)/);
+  assert.match(css, /\.primary-btn\s*\{[^}]*white-space:\s*nowrap/);
 });
 
 test("远程服务 403 仍显示服务返回的状态，不提示 Ollama", async () => {
