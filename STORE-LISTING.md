@@ -7,8 +7,8 @@ Chrome 应用商店与 Edge 加载项共用这一份，改动请两边同步。
 
 | 商店 | 版本 | 上线日期 | 链接 |
 | --- | --- | --- | --- |
-| Chrome Web Store | 0.4.6 待提审（在线以商店为准） | 0.1.0 2026-08-15 / 0.2.0 2026-08-22 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
-| Microsoft Edge Add-ons | 0.4.6 待提审（在线以商店为准） | 0.1.0 2026-08-17 / 0.2.0 2026-08-22 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
+| Chrome Web Store | 0.4.6 已上架 2026-10-10 | 0.1.0 2026-08-15 / 0.2.0 2026-08-22 | https://chromewebstore.google.com/detail/digest-for-bilibili/cfndfabkpfgihcgknbgfnkjlmndhhmfc |
+| Microsoft Edge Add-ons | 0.4.6 已上架 2026-10-09 | 0.1.0 2026-08-17 / 0.2.0 2026-08-22 | https://microsoftedge.microsoft.com/addons/detail/digest-for-bilibili/jlfmjhkcbnkgghefieaagkcccjojmnkm |
 
 两个商店用**同一个 zip**。0.4.6 相对 0.4.5 是缺陷修复：空中文轨改取有正文的字幕，
 页内小窗时笔记按钮让位，Ollama 403 与明文 http 提示修正。
