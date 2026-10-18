@@ -844,6 +844,53 @@ test("换视频后不再沿用上一条字幕语言", async () => {
   assert.equal(request.lang, "");
 });
 
+// Cross-layer tests use real API + transcript service, replacing HTTP/storage only.
+// Synthetic fixtures follow PR #13's acceptance contracts; they are not live captures.
+for (const failFirstSwitch of [false, true]) {
+  test(`BV1DXKS6rEYq 合成契约：侧边栏点击 English 到实际字幕管线（先失败=${failFirstSwitch}）`, async () => {
+    const { createPipeline, track, body, json } = require("./helpers/subtitle-pipeline.js");
+    const bvid = "BV1DXKS6rEYq";
+    let blocked = failFirstSwitch;
+    const h = createPipeline({
+      bvid,
+      tracksAt: () => [track("zh-Hans", "zh", "中文（简体）"), track("en", "en", "English")],
+      contentAt: (url) => url.pathname.endsWith("en.json")
+        ? (blocked ? json({}, 403) : body(157, "Synthetic English"))
+        : body(2, "合成中文"),
+    });
+    const ctx = createContext({ transcript: null, replies: {
+      fetchTranscript: (message) => h.service.fetchTranscript(message.bvid, {
+        page: message.page, lang: message.lang, forceRefresh: message.forceRefresh,
+      }),
+    } });
+    ctx.setupEventListeners();
+    ctx.state.bvid = bvid;
+    await ctx.loadTranscript();
+    assert.equal(ctx.state.data.language, "zh-Hans");
+    h.requests.length = 0;
+    await ctx.el("subtitleMenuPopover").children[1].dispatch("click");
+    if (failFirstSwitch) {
+      assert.equal(ctx.state.view, "error");
+      assert.equal(ctx.el("errorTitle").textContent, "字幕没有加载出来");
+      assert.equal(ctx.state.requestedLang, "en");
+      assert.equal(h.rows.get(`${bvid}:p1`).language, "zh-Hans");
+      blocked = false;
+      await ctx.el("errorRetryBtn").dispatch("click");
+      const retry = ctx.sent.filter((message) => message.action === "fetchTranscript").at(-1);
+      assert.equal(retry.lang, "en");
+      assert.equal(retry.forceRefresh, true);
+    }
+    assert.equal(ctx.state.view, "ready");
+    assert.equal(ctx.state.requestedLang, "en");
+    assert.equal(ctx.state.data.language, "en");
+    assert.equal(ctx.state.data.transcript.length, 157);
+    assert.equal(ctx.state.isChinese, false);
+    assert.equal(ctx.el("subtitleMenuLabel").textContent, "English");
+    assert.ok(h.downloads().length > 0);
+    assert.ok(h.downloads().every(({ url }) => new URL(url).pathname.endsWith("/en.json")));
+  });
+}
+
 // ============================================================
 // 双语对照：三视图人人都有，顺句只给中文字幕
 // ============================================================
