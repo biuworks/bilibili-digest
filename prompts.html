@@ -12,7 +12,7 @@
       <div>
         <h1>管理提示词</h1>
         <p class="lede">
-          仅编辑各能力的<strong>系统提示词</strong>。未自定义时右侧显示完整内置文案（不会写入存储）；
+          仅编辑各能力的<strong>系统提示词</strong>与<strong>推理强度</strong>。未自定义时右侧显示完整内置文案（不会写入存储）；
           空白保存或「恢复默认」后回退内置。改坏可能导致对应功能失败。不支持覆盖带变量的用户提示词模板。
         </p>
       </div>
@@ -36,8 +36,16 @@
             <span id="promptStatus" class="status" role="status"></span>
           </div>
         </div>
+        <div class="effort-bar">
+          <label class="effort-label" for="promptEffort">推理强度</label>
+          <select id="promptEffort" class="effort-select"></select>
+          <span id="promptEffortHint" class="effort-hint"></span>
+        </div>
         <textarea id="promptBody" spellcheck="false" placeholder="加载中…"></textarea>
-        <p class="footer-note">切换能力前若有未保存修改会提示确认。还原只清除该项自定义，不影响学习资料与其它能力。</p>
+        <p class="footer-note">
+          切换能力前若有未保存修改会提示确认。还原只清除该项自定义，不影响学习资料与其它能力。
+          推理强度即改即生效，与提示词分开保存；「恢复默认」会连同该项的推理强度一起清掉。
+        </p>
       </section>
     </div>
   </div>

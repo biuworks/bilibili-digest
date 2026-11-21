@@ -146,6 +146,18 @@ var BILI_SETTINGS = (() => {
     HIGH: "high",
   });
 
+  // 推理强度按能力设：同一档位喂给「顺句」和「问答」是两种代价。
+  // off 等于今天的请求形状；存 off 等于没自定义，不落盘。
+  // 档位怎么落到请求体，见 lib/ai-provider.js 的 buildChatRequest。
+  const REASONING_EFFORTS = Object.freeze({
+    OFF: "off",
+    LOW: "low",
+    MEDIUM: "medium",
+    HIGH: "high",
+  });
+
+  const REASONING_EFFORT_VALUES = Object.freeze(Object.values(REASONING_EFFORTS));
+
   const DEFAULTS = Object.freeze({
     presetId: DEFAULT_PRESET.id,
     protocol: DEFAULT_PRESET.protocol,
@@ -163,6 +175,8 @@ var BILI_SETTINGS = (() => {
     // 各能力自定义系统提示词：{ "analysis.md": "..." }；缺 key / 空串 = 未自定义。
     // 缺省切勿把内置全文写入存储。
     customSystemPrompts: Object.freeze({}),
+    // 各能力推理强度：{ "qa.md": "high" }；缺 key 或 off = 维持今天的请求形状。
+    customReasoningEffort: Object.freeze({}),
     // 字幕轨优先级：人工中文 > 人工英文 > AI（见 lib/bili-api.js）。
     // 有人工轨时选轨会先丢掉 AI，所以机翻中文不会压过人工外文。
     subtitleLangPreference: Object.freeze([
@@ -254,14 +268,51 @@ var BILI_SETTINGS = (() => {
   }
 
   const SYSTEM_PROMPT_MAX = 50000;
+  // reasoningAdvice 只给界面一句取向提示，不参与任何判断：
+  // 理解类抬档有收益（仍默认关），改写类抬档只是多等一会儿。
   const SYSTEM_PROMPT_CAPABILITIES = Object.freeze([
-    Object.freeze({ id: "analysis", file: "analysis.md", label: "概览" }),
-    Object.freeze({ id: "translation", file: "translation.md", label: "翻译" }),
-    Object.freeze({ id: "punctuate", file: "punctuate.md", label: "顺句" }),
-    Object.freeze({ id: "explain", file: "explain.md", label: "划词解释" }),
-    Object.freeze({ id: "note-cleanup", file: "note-cleanup.md", label: "笔记整理" }),
-    Object.freeze({ id: "note-refine", file: "note-refine.md", label: "笔记优化" }),
-    Object.freeze({ id: "qa", file: "qa.md", label: "问答" }),
+    Object.freeze({
+      id: "analysis",
+      file: "analysis.md",
+      label: "概览",
+      reasoningAdvice: "raise",
+    }),
+    Object.freeze({
+      id: "translation",
+      file: "translation.md",
+      label: "翻译",
+      reasoningAdvice: "keep-off",
+    }),
+    Object.freeze({
+      id: "punctuate",
+      file: "punctuate.md",
+      label: "顺句",
+      reasoningAdvice: "keep-off",
+    }),
+    Object.freeze({
+      id: "explain",
+      file: "explain.md",
+      label: "划词解释",
+      reasoningAdvice: "raise",
+    }),
+    Object.freeze({
+      id: "note-cleanup",
+      file: "note-cleanup.md",
+      label: "笔记整理",
+      reasoningAdvice: "keep-off",
+    }),
+    Object.freeze({
+      id: "note-refine",
+      file: "note-refine.md",
+      label: "笔记优化",
+      reasoningAdvice: "keep-off",
+    }),
+    Object.freeze({
+      id: "qa",
+      file: "qa.md",
+      label: "问答",
+      reasoningAdvice: "raise",
+    }),
   ]);
   const SYSTEM_PROMPT_FILES = Object.freeze(
     SYSTEM_PROMPT_CAPABILITIES.map((item) => item.file),
@@ -299,6 +350,32 @@ var BILI_SETTINGS = (() => {
 
   function hasCustomSystemPrompt(settings, fileName) {
     return Boolean(getCustomSystemPrompt(settings, fileName));
+  }
+
+  function normalizeOneReasoningEffort(input) {
+    if (typeof input !== "string") return "";
+    const value = input.trim().toLowerCase();
+    return REASONING_EFFORT_VALUES.includes(value) ? value : "";
+  }
+
+  // 与 customSystemPrompts 同构：只认已知能力文件，未知档位落回内置行为。
+  function normalizeCustomReasoningEffort(source = {}) {
+    const out = {};
+    // 先取值再判空：typeof null 也是 "object"，直接下标会抛。
+    const raw = source && source.customReasoningEffort;
+    const rawMap =
+      raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+    for (const file of SYSTEM_PROMPT_FILES) {
+      const value = normalizeOneReasoningEffort(rawMap[file]);
+      // off 就是内置行为，没必要占用存储位。
+      if (value && value !== REASONING_EFFORTS.OFF) out[file] = value;
+    }
+    return out;
+  }
+
+  function getReasoningEffort(settings, fileName) {
+    const map = normalize(settings).customReasoningEffort;
+    return normalizeOneReasoningEffort(map?.[fileName]) || REASONING_EFFORTS.OFF;
   }
 
   // 备份合并：缺字段或空字符串都不覆盖本机已有自定义。
@@ -473,6 +550,7 @@ var BILI_SETTINGS = (() => {
         ? source.textDensity
         : DEFAULTS.textDensity,
       customSystemPrompts: normalizeCustomSystemPrompts(source),
+      customReasoningEffort: normalizeCustomReasoningEffort(source),
       subtitleLangPreference: normalizeLangPreference(source.subtitleLangPreference),
     };
   }
@@ -544,12 +622,16 @@ var BILI_SETTINGS = (() => {
     ACCENT_THEMES,
     THEME_MODES,
     TEXT_DENSITIES,
+    REASONING_EFFORTS,
     SYSTEM_PROMPT_MAX,
     SYSTEM_PROMPT_CAPABILITIES,
     SYSTEM_PROMPT_FILES,
     analysisChunkOptions,
     normalizeOneSystemPrompt,
     normalizeCustomSystemPrompts,
+    normalizeOneReasoningEffort,
+    normalizeCustomReasoningEffort,
+    getReasoningEffort,
     getCustomSystemPrompt,
     hasCustomSystemPrompt,
     mergeCustomSystemPrompts,

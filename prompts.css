@@ -143,6 +143,54 @@ body {
   align-items: center;
 }
 
+/* 推理强度：跟提示词同属「这个能力怎么调」，所以放在同一栏里，不另起一页。
+   底色用这页既有的 --bg，和导航栏留白同色族，不引入新的色号。 */
+.effort-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border, #e3e6ef);
+  border-radius: 10px;
+  background: var(--bg, #f6f7fb);
+}
+
+.effort-label {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.effort-select {
+  border: 1px solid var(--border, #d0d5dd);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 13px;
+  background: var(--surface, #fff);
+  color: inherit;
+}
+
+.effort-select:focus {
+  border-color: var(--accent, #fb7299);
+  outline: none;
+}
+
+.effort-hint {
+  color: var(--muted, #667085);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* 与「已自定义」区分：那枚是实心强调色，推理档位用描边款。
+   两个徽章并排时才看得出是两件事，而不是同一项的两个状态。 */
+.badge.effort {
+  background: var(--surface, #fff);
+  color: var(--accent-text, #c2255c);
+  box-shadow: inset 0 0 0 1px var(--accent-soft-strong, #ffd0df);
+}
+
 .primary-btn,
 .ghost-btn {
   border-radius: 8px;
