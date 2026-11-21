@@ -277,16 +277,17 @@ var BILI_SETTINGS = (() => {
   // 兼容旧字段 analysisSystemPrompt → 并入 analysis.md。
   function normalizeCustomSystemPrompts(source = {}) {
     const out = {};
+    const rawPrompts = source && source.customSystemPrompts;
     const rawMap =
-      source && typeof source.customSystemPrompts === "object" && !Array.isArray(source.customSystemPrompts)
-        ? source.customSystemPrompts
+      rawPrompts && typeof rawPrompts === "object" && !Array.isArray(rawPrompts)
+        ? rawPrompts
         : {};
     for (const file of SYSTEM_PROMPT_FILES) {
       const value = normalizeOneSystemPrompt(rawMap[file]);
       if (value) out[file] = value;
     }
     if (!out["analysis.md"]) {
-      const legacy = normalizeOneSystemPrompt(source.analysisSystemPrompt);
+      const legacy = normalizeOneSystemPrompt(source && source.analysisSystemPrompt);
       if (legacy) out["analysis.md"] = legacy;
     }
     return out;

@@ -296,6 +296,19 @@ test("normalize 能接受 null 与非对象输入", () => {
   assert.equal(settings.normalize(undefined).aiApiKey, "");
 });
 
+test("customSystemPrompts 为 null 时回落为空映射而不是抛错", () => {
+  assert.deepEqual(settings.normalize({ customSystemPrompts: null }).customSystemPrompts, {});
+});
+
+test("customSystemPrompts 为数组时回落为空映射", () => {
+  assert.deepEqual(settings.normalize({ customSystemPrompts: ["qa.md"] }).customSystemPrompts, {});
+});
+
+test("customSystemPrompts 为 null 时旧字段 analysisSystemPrompt 仍然生效", () => {
+  const normalized = settings.normalize({ customSystemPrompts: null, analysisSystemPrompt: "旧字段" });
+  assert.equal(normalized.customSystemPrompts["analysis.md"], "旧字段");
+});
+
 // ============================================================
 // 配置校验
 // ============================================================
