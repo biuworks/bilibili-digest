@@ -989,3 +989,98 @@ test("主题色变更会广播给播放页内容脚本，其它变更不广播",
   }
   assert.equal(ctx.tabMessages.length, 0);
 });
+
+test("推理强度按能力保存：off 不落盘，未知能力被拒", async () => {
+  const ctx = createBackground();
+
+  const saved = await ctx.send({
+    action: "saveReasoningEffort",
+    file: "qa.md",
+    effort: "high",
+  });
+  assert.equal(saved.success, true);
+  assert.equal(saved.reasoningEffort, "high");
+  assert.deepEqual(
+    SETTINGS.normalize(ctx.storage.data[SETTINGS.STORAGE_KEY])
+      .customReasoningEffort,
+    { "qa.md": "high" },
+  );
+
+  // off 就是内置行为，不该在存储里留下 key。
+  const off = await ctx.send({
+    action: "saveReasoningEffort",
+    file: "qa.md",
+    effort: "off",
+  });
+  assert.equal(off.reasoningEffort, "off");
+  assert.deepEqual(
+    SETTINGS.normalize(ctx.storage.data[SETTINGS.STORAGE_KEY])
+      .customReasoningEffort,
+    {},
+  );
+
+  const rejected = await ctx.send({
+    action: "saveReasoningEffort",
+    file: "bogus.md",
+    effort: "high",
+  });
+  assert.equal(rejected.success, false);
+  assert.equal(rejected.error, "UNKNOWN_PROMPT_FILE");
+});
+
+test("恢复默认会同时清掉该能力的推理强度", async () => {
+  const ctx = createBackground({
+    initial: {
+      [SETTINGS.STORAGE_KEY]: {
+        presetId: "custom",
+        protocol: SETTINGS.PROTOCOLS.OPENAI,
+        aiApiKey: "k",
+        aiBaseUrl: "https://example.com/v1",
+        aiModel: "m",
+        customSystemPrompts: { "qa.md": "自定义问答提示词" },
+        customReasoningEffort: { "qa.md": "high", "analysis.md": "low" },
+      },
+    },
+  });
+
+  const restored = await ctx.send({
+    action: "restoreSystemPrompt",
+    file: "qa.md",
+  });
+  assert.equal(restored.success, true);
+
+  const stored = SETTINGS.normalize(ctx.storage.data[SETTINGS.STORAGE_KEY]);
+  assert.deepEqual(stored.customSystemPrompts, {});
+  assert.deepEqual(
+    stored.customReasoningEffort,
+    { "analysis.md": "low" },
+    "其它能力的档位不受影响",
+  );
+});
+
+test("提示词状态回包带 reasoningEffort，供列表角标使用", async () => {
+  const ctx = createBackground({
+    initial: {
+      [SETTINGS.STORAGE_KEY]: {
+        presetId: "custom",
+        protocol: SETTINGS.PROTOCOLS.OPENAI,
+        aiApiKey: "k",
+        aiBaseUrl: "https://example.com/v1",
+        aiModel: "m",
+        customReasoningEffort: { "qa.md": "high" },
+      },
+    },
+  });
+
+  const list = await ctx.send({ action: "listSystemPromptStates" });
+  assert.equal(list.success, true);
+  const qa = list.items.find((item) => item.file === "qa.md");
+  assert.equal(qa.reasoningEffort, "high");
+  // 没设过的能力回 off，界面因此不会给它挂角标。
+  const translation = list.items.find((item) => item.file === "translation.md");
+  assert.equal(translation.reasoningEffort, "off");
+
+  const single = await ctx.send({ action: "getSystemPromptState", file: "qa.md" });
+  assert.equal(single.success, true);
+  assert.equal(single.reasoningEffort, "high");
+});

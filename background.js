@@ -610,6 +610,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           id: cap.id,
           label: cap.label,
           customized: BILI_SETTINGS.hasCustomSystemPrompt(settings, cap.file),
+          reasoningEffort: BILI_SETTINGS.getReasoningEffort(settings, cap.file),
         });
       }
       sendResponse({ success: true, items });
@@ -636,6 +637,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         effective: custom || builtin,
         builtin,
         custom,
+        reasoningEffort: BILI_SETTINGS.getReasoningEffort(settings, file),
       });
     })().catch((error) =>
       sendResponse({ success: false, error: error.message }),
@@ -683,14 +685,48 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const current = BILI_SETTINGS.normalize(stored[BILI_SETTINGS.STORAGE_KEY]);
       const map = { ...current.customSystemPrompts };
       delete map[file];
+      // 「恢复默认」是一次原子回退：提示词和推理强度一起清，否则会留下
+      // 「文案回到内置、请求还带着上次抬的档」这种半恢复状态。
+      const effortMap = { ...current.customReasoningEffort };
+      delete effortMap[file];
       const next = BILI_SETTINGS.normalize({
         ...stored[BILI_SETTINGS.STORAGE_KEY],
         customSystemPrompts: map,
         analysisSystemPrompt: undefined,
+        customReasoningEffort: effortMap,
       });
       await chrome.storage.local.set({ [BILI_SETTINGS.STORAGE_KEY]: next });
       const builtin = await getBuiltinSystemPromptText(file);
       sendResponse({ success: true, customized: false, effective: builtin, builtin });
+    })().catch((error) =>
+      sendResponse({ success: false, error: error.message }),
+    );
+    return true;
+  }
+
+  if (message?.action === "saveReasoningEffort") {
+    (async () => {
+      const file = String(message.file || "");
+      if (!BILI_SETTINGS.SYSTEM_PROMPT_FILES.includes(file)) {
+        sendResponse({ success: false, error: "UNKNOWN_PROMPT_FILE" });
+        return;
+      }
+      // 未知档位和 off 都按「回到内置行为」处理，不往存储里留无用字段。
+      const value = BILI_SETTINGS.normalizeOneReasoningEffort(message.effort);
+      const stored = await chrome.storage.local.get(BILI_SETTINGS.STORAGE_KEY);
+      const current = BILI_SETTINGS.normalize(stored[BILI_SETTINGS.STORAGE_KEY]);
+      const map = { ...current.customReasoningEffort };
+      if (value && value !== BILI_SETTINGS.REASONING_EFFORTS.OFF) map[file] = value;
+      else delete map[file];
+      const next = BILI_SETTINGS.normalize({
+        ...stored[BILI_SETTINGS.STORAGE_KEY],
+        customReasoningEffort: map,
+      });
+      await chrome.storage.local.set({ [BILI_SETTINGS.STORAGE_KEY]: next });
+      sendResponse({
+        success: true,
+        reasoningEffort: BILI_SETTINGS.getReasoningEffort(next, file),
+      });
     })().catch((error) =>
       sendResponse({ success: false, error: error.message }),
     );
@@ -919,6 +955,8 @@ async function handleSegmentRewrite(
       temperature: 0.2,
       responseFormat: { type: "json_object" },
       signal,
+      // 顺句和翻译共用这条管线，推理强度按各自的提示词文件查。
+      capability: task.promptFile,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
@@ -982,6 +1020,7 @@ async function handleExplainSelection(selectedText, transcriptContext, videoTitl
 
     const { text: explanation } = await requestAiCompletion({
       maxTokens: 1024,
+      capability: "explain.md",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },
