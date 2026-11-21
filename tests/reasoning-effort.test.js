@@ -142,7 +142,10 @@ test("档位关闭时 DeepSeek 请求体与改动前完全一致", () => {
 // ============================================================
 
 test("OpenAI 推理模型按档位转发 reasoning_effort", () => {
-  const settings = makeSettings({ aiModel: "o3-mini" });
+  const settings = makeSettings({
+    aiBaseUrl: "https://api.openai.com/v1",
+    aiModel: "o3-mini",
+  });
   for (const level of [REASONING_EFFORTS.LOW, REASONING_EFFORTS.MEDIUM, REASONING_EFFORTS.HIGH]) {
     const request = PROVIDER.buildChatRequest({
       settings,
@@ -258,6 +261,116 @@ test("未知厂商不会被塞进未知字段", () => {
   assert.equal("reasoning_effort" in request.body, false);
 });
 
+// 上面那条用的是 some-model。推理模型名会单独打开 reasoning_effort，
+// 未知主机必须同样不泄漏；对照关闭档的请求体，确认只少这一字段。
+test("未知主机上的推理模型开档也不泄漏 reasoning_effort", () => {
+  const models = ["o3", "o3-mini", "gpt-5"];
+  const levels = [REASONING_EFFORTS.LOW, REASONING_EFFORTS.MEDIUM, REASONING_EFFORTS.HIGH];
+  const baseUrls = ["https://gateway.example.org/v1", "https://api.example.com/v1"];
+  for (const aiBaseUrl of baseUrls) {
+    for (const aiModel of models) {
+      for (const reasoningEffort of levels) {
+        const opened = PROVIDER.buildChatRequest({
+          settings: makeSettings({ aiBaseUrl, aiModel }),
+          messages: MESSAGES,
+          maxTokens: 128,
+          reasoningEffort,
+        });
+        const closed = PROVIDER.buildChatRequest({
+          settings: makeSettings({ aiBaseUrl, aiModel }),
+          messages: MESSAGES,
+          maxTokens: 128,
+        });
+        assert.equal(
+          "reasoning_effort" in opened.body,
+          false,
+          `${aiBaseUrl} ${aiModel} ${reasoningEffort}`,
+        );
+        assert.deepEqual(opened.body, closed.body, `${aiBaseUrl} ${aiModel} ${reasoningEffort}`);
+      }
+    }
+  }
+});
+
+test("官方 OpenAI 主机上的推理模型按档位映射 reasoning_effort", () => {
+  const models = ["o3", "o3-mini", "gpt-5"];
+  const levels = [REASONING_EFFORTS.LOW, REASONING_EFFORTS.MEDIUM, REASONING_EFFORTS.HIGH];
+  const baseUrls = [
+    "https://api.openai.com/v1",
+    "https://API.OPENAI.COM/v1",
+    "https://openai.com/v1",
+  ];
+  for (const aiBaseUrl of baseUrls) {
+    for (const aiModel of models) {
+      const closed = PROVIDER.buildChatRequest({
+        settings: makeSettings({ aiBaseUrl, aiModel }),
+        messages: MESSAGES,
+        maxTokens: 128,
+        reasoningEffort: REASONING_EFFORTS.OFF,
+      });
+      const omitted = PROVIDER.buildChatRequest({
+        settings: makeSettings({ aiBaseUrl, aiModel }),
+        messages: MESSAGES,
+        maxTokens: 128,
+      });
+      assert.equal("reasoning_effort" in closed.body, false, `${aiBaseUrl} ${aiModel} off`);
+      assert.deepEqual(closed.body, omitted.body, `${aiBaseUrl} ${aiModel} 缺省等于 off`);
+      for (const reasoningEffort of levels) {
+        const opened = PROVIDER.buildChatRequest({
+          settings: makeSettings({ aiBaseUrl, aiModel }),
+          messages: MESSAGES,
+          maxTokens: 128,
+          reasoningEffort,
+        });
+        assert.equal(opened.body.reasoning_effort, reasoningEffort, `${aiBaseUrl} ${aiModel}`);
+        assert.deepEqual(opened.body, { ...closed.body, reasoning_effort: reasoningEffort });
+      }
+    }
+  }
+});
+
+test("reasoning_effort 只认解析后的 OpenAI 主机名", () => {
+  const deceptive = [
+    "https://myopenai.com/v1",
+    "https://notopenai.com/v1",
+    "https://api.openai.com.evil.example/v1",
+    "https://openai.com.evil.example/v1",
+    "https://evil.example/api.openai.com/v1",
+    "https://evil.example/v1?host=api.openai.com",
+    "https://evil.example/v1#api.openai.com",
+    "https://api.openai.com@evil.example/v1",
+    "https://generativelanguage.googleapis.com/v1beta/openai",
+    "https://openrouter.ai/api/v1",
+    "https://api.deepseek.com",
+    "http://localhost:11434/v1",
+  ];
+  for (const aiBaseUrl of deceptive) {
+    const settings = {
+      ...makeSettings({ aiModel: "o3" }),
+      aiBaseUrl,
+    };
+    const request = PROVIDER.buildChatRequest({
+      settings,
+      messages: MESSAGES,
+      maxTokens: 128,
+      reasoningEffort: REASONING_EFFORTS.HIGH,
+    });
+    assert.equal("reasoning_effort" in request.body, false, aiBaseUrl);
+  }
+
+  // 用户信息出现在真实主机上时，解析结果仍是 api.openai.com，字段要保留。
+  const credentialed = PROVIDER.buildChatRequest({
+    settings: {
+      ...makeSettings({ aiModel: "gpt-5" }),
+      aiBaseUrl: "https://user:secret@api.openai.com/v1",
+    },
+    messages: MESSAGES,
+    maxTokens: 128,
+    reasoningEffort: REASONING_EFFORTS.LOW,
+  });
+  assert.equal(credentialed.body.reasoning_effort, REASONING_EFFORTS.LOW);
+});
+
 // ============================================================
 // transport：调用方只说「我是谁」，档位由 capability 查表
 // ============================================================
@@ -267,6 +380,7 @@ test("requestAiCompletion 按 capability 取档位并落到请求体", async () 
   const transport = TRANSPORT.createAiTransport({
     getSettings: async () =>
       makeSettings({
+        aiBaseUrl: "https://api.openai.com/v1",
         aiModel: "o3-mini",
         customReasoningEffort: { "qa.md": "high" },
       }),
