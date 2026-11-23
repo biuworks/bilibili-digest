@@ -3,7 +3,7 @@
  *
  * 字幕区三视图（原文 / 译文 / 双语）人人都有，翻译方向由字幕语种决定；
  * 「顺句」只给中文字幕，且与三视图可叠加（开着顺句时原文指顺句稿）。
- * 侧边栏是全窗口共享的，标签页查询都限定在本面板所属窗口内。
+ * 页内面板复用完整界面，每个 iframe 绑定自己的宿主 B 站标签页。
  */
 
 "use strict";
@@ -278,15 +278,37 @@ function parsePage(url) {
   return Number.isFinite(page) && page > 0 ? page : 1;
 }
 
+let pagePanelHostId = null;
+
 async function activeTab() {
+  if (pagePanelHostId !== null) return chrome.tabs.get(pagePanelHostId);
   const [tab] = await chrome.tabs.query({ active: true, windowId: state.windowId });
   return tab || null;
 }
 
-// 跟随当前标签页：换了视频就重新取字幕，不是播放页就回到提示态。
+function isBilibiliPage(value) {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") &&
+      (url.hostname === "bilibili.com" || url.hostname.endsWith(".bilibili.com"));
+  } catch {
+    return false;
+  }
+}
+
+let tabSyncSequence = 0;
+
+// 跟随宿主标签页：换视频取字幕，B 站非播放页显示引导。
+// 页内 iframe 随宿主页面切换自然显隐，不调用浏览器原生侧边栏。
 async function syncWithActiveTab({ force = false } = {}) {
+  const sequence = ++tabSyncSequence;
   const tab = await activeTab();
-  const bvid = parseBvid(tab?.url);
+  // 快速切换时，丢弃较早的标签查询结果，避免旧视频覆盖当前内容。
+  if (sequence !== tabSyncSequence) return;
+  // 新标签页正在建立或 URL 暂不可用时，等待后续 onUpdated 再判断。
+  if (!tab?.url) return;
+  if (!isBilibiliPage(tab.url)) return;
+  const bvid = parseBvid(tab.url);
 
   if (!bvid) {
     state.requestedLang = "";
@@ -2618,13 +2640,13 @@ function setupEventListeners() {
   );
 
   chrome.tabs.onActivated.addListener(({ windowId }) => {
-    if (windowId === state.windowId) syncWithActiveTab();
+    if (pagePanelHostId === null && windowId === state.windowId) syncWithActiveTab();
   });
 
   // B 站换视频走 pushState，浏览器会以 changeInfo.url 的形式上报。
-  // 不比对 tabId：syncWithActiveTab 自己会解析当前活动标签页，没变就直接返回。
+  // 页内面板只监听自己的宿主；独立预览模式仍跟随活动标签页。
   chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-    if (changeInfo.url) syncWithActiveTab();
+    if (changeInfo.url && (pagePanelHostId === null || tabId === pagePanelHostId)) syncWithActiveTab();
   });
 
   chrome.runtime.onMessage.addListener((message) => {
@@ -2657,7 +2679,14 @@ function setupEventListeners() {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-  state.windowId = (await chrome.windows.getCurrent()).id;
+  if (new URLSearchParams(window.location.search).get("embedded") === "1") {
+    const host = await sendToBackground({ action: "getPagePanelHost" });
+    if (!host?.success || !host.tab) return;
+    pagePanelHostId = host.tab.id;
+    state.windowId = host.tab.windowId;
+  } else {
+    state.windowId = (await chrome.windows.getCurrent()).id;
+  }
   // 「没有视频」的文案单一来源：idle 态与笔记页的空态都从这里取。
   el("idleTitle").textContent = NO_VIDEO_TITLE;
   el("idleText").textContent = NO_VIDEO_TEXT;

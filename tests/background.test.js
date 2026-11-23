@@ -52,12 +52,17 @@ function createBackground({
   const storageChangedListeners = [];
   const tabMessages = [];
   let tabsToReturn = [];
+  const panelOptions = [];
+  const panelOpens = [];
+  const events = {};
+  const event = (name) => ({ addListener: (fn) => { events[name] = fn; } });
   const context = {
     console,
     setTimeout,
     clearTimeout,
     AbortController,
     TextDecoder,
+    URL,
     indexedDB: idb,
     fetch: async (url, options = {}) => {
       const target = String(url);
@@ -93,20 +98,27 @@ function createBackground({
         onChanged: { addListener: (fn) => storageChangedListeners.push(fn) },
       },
       tabs: {
+        onCreated: event("created"),
+        onUpdated: event("updated"),
         query: (queryInfo, callback) => callback(tabsToReturn),
         sendMessage: async (tabId, message) => {
           tabMessages.push({ tabId, message });
         },
       },
-      sidePanel: { setPanelBehavior: async () => {}, open: async () => {} },
+      action: { onClicked: event("actionClicked") },
+      sidePanel: {
+        setPanelBehavior: async () => {},
+        setOptions: async (options) => { panelOptions.push(structuredClone(options)); },
+        open: async (options) => { panelOpens.push(structuredClone(options)); },
+      },
       runtime: {
         getURL: (value) => value,
         getManifest: () => ({
           content_scripts: [{ matches: ["https://www.bilibili.com/video/*"] }],
         }),
         openOptionsPage() {},
-        onInstalled: { addListener() {} },
-        onStartup: { addListener() {} },
+        onInstalled: event("installed"),
+        onStartup: event("startup"),
         onMessage: {
           addListener(listener) {
             messageListener = listener;
@@ -157,10 +169,10 @@ function createBackground({
   vm.createContext(context);
   vm.runInContext(fs.readFileSync(path.join(ROOT, "background.js"), "utf8"), context);
 
-  async function send(message) {
+  async function send(message, sender = {}) {
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error("消息没有回复")), 8000);
-      messageListener(message, {}, (result) => {
+      messageListener(message, sender, (result) => {
         clearTimeout(timeout);
         resolve(result);
       });
@@ -174,6 +186,9 @@ function createBackground({
     idb,
     storageChangedListeners,
     tabMessages,
+    panelOptions,
+    panelOpens,
+    events,
     setTabs: (tabs) => {
       tabsToReturn = tabs;
     },
@@ -1083,4 +1098,54 @@ test("提示词状态回包带 reasoningEffort，供列表角标使用", async (
   const single = await ctx.send({ action: "getSystemPromptState", file: "qa.md" });
   assert.equal(single.success, true);
   assert.equal(single.reasoningEffort, "high");
+});
+
+
+test("页内面板默认关闭，打开广播所有 B 站页面，关闭后持久化", async () => {
+ const ctx = createBackground();
+ const sender = { tab: { id: 1, windowId: 7, url: "https://www.bilibili.com/video/" + BVID } };
+ ctx.setTabs([sender.tab, { id: 2, url: "https://space.bilibili.com/1" }, { id: 3, url: "https://example.com" }]);
+ assert.equal((await ctx.send({action:"getPagePanelState"},sender)).open,false);
+ await ctx.send({action:"openSidePanel"},sender);
+ assert.equal(ctx.storage.data.bili_digest_page_panel_open,true);
+ assert.deepEqual(ctx.tabMessages.map(x=>x.tabId),[1,2]);
+ await ctx.send({action:"setPagePanelOpen",open:false},sender);
+ assert.equal((await ctx.send({action:"getPagePanelState"},sender)).open,false);
+ const restarted = createBackground({storage:ctx.storage});
+ assert.equal((await restarted.send({action:"getPagePanelState"},sender)).open,false);
+ assert.equal(ctx.panelOpens.length,0);
+});
+test("页内面板宿主身份来自 sender，外站不能读写打开状态", async () => {
+ const ctx=createBackground();
+ const sender={tab:{id:5,windowId:7,url:"https://www.bilibili.com/"}};
+ const host=await ctx.send({action:"getPagePanelHost",tabId:99},sender);
+ assert.equal(host.tab.id,5);
+ const denied=await ctx.send({action:"setPagePanelOpen",open:true},{tab:{id:2,url:"https://bilibili.com.evil.org"}});
+ assert.equal(denied.success,false);
+ assert.equal(ctx.storage.data.bili_digest_page_panel_open,undefined);
+});
+test("打开和手动关闭串行保存，最终关闭不会被旧打开请求覆盖",async()=>{
+ const ctx=createBackground();
+ const sender={tab:{id:1,url:"https://www.bilibili.com/"}};
+ await Promise.all([ctx.send({action:"openSidePanel"},sender),ctx.send({action:"setPagePanelOpen",open:false},sender)]);
+ assert.equal(ctx.storage.data.bili_digest_page_panel_open,false);
+});
+
+test("悬浮布局持久化、广播并在后台重启后恢复，局部更新保留其他字段",async()=>{
+ const ctx=createBackground();const sender={tab:{id:1,url:"https://www.bilibili.com/"}};
+ ctx.setTabs([sender.tab,{id:2,url:"https://www.bilibili.com/video/"+BVID},{id:3,url:"https://example.com"}]);
+ await ctx.send({action:"setPagePanelLayout",layout:{x:100,y:150,width:600,height:500,bubbleX:200,bubbleY:50,pinned:true}},sender);
+ await ctx.send({action:"setPagePanelLayout",layout:{pinned:false}},sender);
+ assert.deepEqual(ctx.tabMessages.map(m=>m.tabId),[1,2,1,2]);
+ const restarted=createBackground({storage:ctx.storage});
+ const state=await restarted.send({action:"getPagePanelState"},sender);
+ assert.equal(state.layout.width,600);assert.equal(state.layout.x,100);assert.equal(state.layout.pinned,false);
+ assert.equal(state.layout.version,2);assert.equal(state.open,false);
+});
+test("拒绝外站布局写入、过滤非法布局且不接受客户端伪造版本",async()=>{
+ const ctx=createBackground();const sender={tab:{id:1,url:"https://www.bilibili.com/"}};
+ assert.equal((await ctx.send({action:"setPagePanelLayout",layout:{x:1}},{tab:{url:"https://example.com"}})).success,false);
+ assert.equal((await ctx.send({action:"setPagePanelLayout",layout:{width:NaN,height:-1,pinned:"true"}},sender)).success,false);
+ const result=await ctx.send({action:"setPagePanelLayout",layout:{x:120,pinned:true,version:999999,unknown:3}},sender);
+ assert.equal(result.layout.version,1);assert.equal(result.layout.unknown,undefined);
 });

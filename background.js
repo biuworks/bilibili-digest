@@ -270,65 +270,76 @@ async function getSettings() {
 // 侧边栏
 // ============================================================
 
-/**
- * 侧边栏对所有页面可用，路径由清单的 side_panel.default_path 给出，这里
- * 不按标签页 setOptions。原因是 per-tab 的 enabled 在两个浏览器上语义不同：
- * Chrome 每个标签页各管各的，Edge 则是窗口级——切到一个 disabled 的标签页会
- * 把整个窗口的侧边栏关掉，切回来也不会自动恢复，正在跑的 AI 任务跟着断
- * （microsoft/MicrosoftEdge-Extensions#142）。改成全局可用之后两边行为一致，
- * 顺带躲开了 setOptions 重载面板打断任务的老毛病；非播放页由侧边栏自己显示引导。
- */
+// 页内面板打开状态独立于设置和学习数据，关闭后跨标签、刷新和重启保持关闭。
+const PAGE_PANEL_KEY = "bili_digest_page_panel_open";
+const PAGE_PANEL_LAYOUT_KEY = "bili_digest_page_panel_layout";
 
-// 让浏览器自己响应工具栏图标的点击。自己调 open() 要求调用发生在用户手势里，
-// 而手势的判定 Edge 比 Chrome 严，交给浏览器是两边都稳的唯一做法。
-function enableActionClickToOpen() {
-  chrome.sidePanel
-    .setPanelBehavior({ openPanelOnActionClick: true })
-    .catch((error) =>
-      console.warn("[Bilibili Digest] 无法设置侧边栏点击行为：", error),
-    );
+function normalizePagePanelLayout(value) {
+  const layout = {};
+  if (!value || typeof value !== "object") return layout;
+  for (const key of ["x", "y", "width", "height", "bubbleX", "bubbleY"]) {
+    if (typeof value[key] === "number" && Number.isFinite(value[key]) && value[key] >= 0) {
+      if ((key === "width" || key === "height") && value[key] === 0) continue;
+      layout[key] = Math.min(100000, value[key]);
+    }
+  }
+  if (typeof value.pinned === "boolean") layout.pinned = value.pinned;
+  return layout;
 }
 
-// 这两项都是持久化设置，装好/升级/浏览器启动时各设一次即可，不必每次
-// worker 醒来都重设——那正是会撞上 `No SW` 的顶层异步。
-function initializeOnce() {
-  restrictStorageAccess();
-  enableActionClickToOpen();
+function setPagePanelLayout(patch) {
+  const operation = pagePanelWrite.then(async () => {
+    const stored = await chrome.storage.local.get(PAGE_PANEL_LAYOUT_KEY);
+    const old = stored[PAGE_PANEL_LAYOUT_KEY];
+    const version = Number.isSafeInteger(old?.version) ? old.version + 1 : 1;
+    const layout = { ...normalizePagePanelLayout(old), ...patch, version };
+    await chrome.storage.local.set({ [PAGE_PANEL_LAYOUT_KEY]: layout });
+    const tabs = await new Promise(resolve => chrome.tabs.query({ url: "https://*.bilibili.com/*" }, resolve));
+    await Promise.all(tabs.filter(tab => isBilibiliPage(tab.url)).map(tab =>
+      chrome.tabs.sendMessage(tab.id, { action: "pagePanelLayoutChanged", layout }).catch(() => {}),
+    ));
+    return { success: true, layout };
+  });
+  pagePanelWrite = operation.catch(() => {});
+  return operation;
+}
+let pagePanelWrite = Promise.resolve();
+
+function isBilibiliPage(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" &&
+      (url.hostname === "bilibili.com" || url.hostname.endsWith(".bilibili.com"));
+  } catch { return false; }
 }
 
-chrome.runtime.onStartup.addListener(initializeOnce);
+function setPagePanelOpen(open) {
+  const operation = pagePanelWrite.then(async () => {
+    await chrome.storage.local.set({ [PAGE_PANEL_KEY]: open });
+    const tabs = await new Promise(resolve => chrome.tabs.query({ url: "https://*.bilibili.com/*" }, resolve));
+    await Promise.all(tabs.filter(tab => isBilibiliPage(tab.url)).map(tab =>
+      chrome.tabs.sendMessage(tab.id, { action: "pagePanelStateChanged", open }).catch(() => {}),
+    ));
+    return { success: true, open };
+  });
+  pagePanelWrite = operation.catch(() => {});
+  return operation;
+}
 
+async function handleOpenSidePanel(tab) {
+  if (!tab || !isBilibiliPage(tab.url)) return { success: false };
+  return setPagePanelOpen(true);
+}
+
+chrome.action.onClicked.addListener(tab => {
+  handleOpenSidePanel(tab).catch(error => console.warn("[Bilibili Digest] 无法打开页内面板", error));
+});
+chrome.runtime.onStartup.addListener(restrictStorageAccess);
 chrome.runtime.onInstalled.addListener(async ({ reason }) => {
-  initializeOnce();
+  restrictStorageAccess();
   if (reason === "install") chrome.runtime.openOptionsPage();
-  // 升级正是数据迁移该发生的时刻，而且这里是真事件，有 keepalive 兜着。
-  // 万一仍被打断，各读写路径上的 learningDataReady() 会再补一次。
   await learningDataReady();
 });
-
-/**
- * 播放页上那个注入的 Digest 按钮走这条路。手势能否从内容脚本的消息传递到这里，
- * Chrome 认，Edge 不一定认。被拒绝时如实回话，让页面上的按钮改口引导用户去点
- * 工具栏图标——那条路由浏览器自己处理，一定有效。
- */
-async function handleOpenSidePanel(tab) {
-  if (!tab) return { success: false };
-
-  try {
-    // 传 windowId 而不是 tabId：侧边栏是窗口级的，没有按标签页区分的路径。
-    await chrome.sidePanel.open({ windowId: tab.windowId });
-  } catch (error) {
-    console.warn("[Bilibili Digest] 打开侧边栏被拒绝：", error);
-    return { success: false, needsToolbarClick: true };
-  }
-
-  // 侧边栏可能本来就开着而且停在别的视频上，广播一次让它跟过来。
-  // 刚打开的那种情形不必担心广播丢失，面板自己启动时就会同步当前标签页。
-  chrome.runtime
-    .sendMessage({ action: "startDigestFromButton" })
-    .catch(() => {});
-  return { success: true };
-}
 
 // ============================================================
 // 消息路由
@@ -357,6 +368,41 @@ chrome.storage.onChanged.addListener((changes, area) => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (["getPagePanelState", "setPagePanelOpen", "getPagePanelHost", "setPagePanelLayout"].includes(message?.action)) {
+    // 只接受 B 站宿主标签页；宿主身份从浏览器 sender 读取，不能由网页伪造。
+    if (!sender.tab || !isBilibiliPage(sender.tab.url)) {
+      sendResponse({ success: false });
+      return false;
+    }
+    if (message.action === "getPagePanelHost") {
+      sendResponse({ success: true, tab: sender.tab });
+      return false;
+    }
+    if (message.action === "setPagePanelLayout") {
+      const patch = normalizePagePanelLayout(message.layout);
+      if (!Object.keys(patch).length) {
+        sendResponse({ success: false });
+        return false;
+      }
+      setPagePanelLayout(patch).then(sendResponse).catch(() => sendResponse({ success: false }));
+      return true;
+    }
+    if (message.action === "setPagePanelOpen") {
+      if (typeof message.open !== "boolean") {
+        sendResponse({ success: false });
+        return false;
+      }
+      setPagePanelOpen(message.open).then(sendResponse).catch(() => sendResponse({ success: false }));
+    } else {
+      pagePanelWrite.then(() => chrome.storage.local.get([PAGE_PANEL_KEY, PAGE_PANEL_LAYOUT_KEY]))
+        .then(data => sendResponse({ success: true, open: data[PAGE_PANEL_KEY] === true,
+          layout: { ...normalizePagePanelLayout(data[PAGE_PANEL_LAYOUT_KEY]), version: data[PAGE_PANEL_LAYOUT_KEY]?.version || 0 },
+        }))
+        .catch(() => sendResponse({ success: false }));
+    }
+    return true;
+  }
+
   if (message?.action === "startAiTask") {
     sendResponse(startAiTask(message));
     return false;

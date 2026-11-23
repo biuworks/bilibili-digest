@@ -121,7 +121,7 @@ function createContext({
     clearTimeout,
     setInterval,
     CSS: { escape: (value) => value },
-    window: { getSelection: () => null, innerWidth: 500, addEventListener() {} },
+    window: { getSelection: () => null, innerWidth: 500, addEventListener() {}, closeCalls: 0, close() { this.closeCalls++; } },
     document: {
       getElementById: byId,
       createElement: (tag) => {
@@ -213,7 +213,7 @@ function createContext({
   // 所以在末尾追加一行，从同一个词法作用域里把要测的绑定递出来。
   const source = fs.readFileSync(path.join(ROOT, "sidepanel.js"), "utf8");
   vm.runInContext(
-    `${source}\n;globalThis.__api = { state, loadTranscript, switchSubtitleLang, syncWithActiveTab, setupEventListeners, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground, submitQuestion, onQaButtonClick, switchTab, appendAnswerText };`,
+    `${source}\n;globalThis.__api = { state, loadTranscript, switchSubtitleLang, syncWithActiveTab, setupEventListeners, setHost: id => { pagePanelHostId = id; }, analyze, cancelAnalysis, cancelRewrite, segmentDisplayText, paintSegmentText, setTranscriptMode, selectionContext, onSelectionChange, applySearchFilter, updateFollowPill, jumpToActive, closeSearch, renderNoteCard, playNote, loadNotes, syncQuoteButtonsWithNotes, exportNotes, exportLearning, renderNotes, applyNotesSearch, renderAnalysis, sendToBackground, submitQuestion, onQaButtonClick, switchTab, appendAnswerText };`,
     context,
   );
 
@@ -2028,4 +2028,55 @@ test("回答正文支持区间时间戳：显示区间、跳到起点", () => {
     .map((child) => (typeof child === "string" ? child : child.textContent))
     .join("");
   assert.equal(rendered, "依据见 0:11-0:23 与 [9:99] 越界");
+});
+
+test("共享面板响应 B 站 A/B 标签切换，自动获取对应字幕且忽略其他窗口", async () => {
+  const ctx = createContext({ transcript: transcriptResult() });
+  let activated;
+  ctx.chrome.tabs.onActivated.addListener = fn => { activated = fn; };
+  ctx.state.windowId = 7;
+  ctx.setupEventListeners();
+  const switchTab = async (id, bvid, windowId = 7) => {
+    ctx.chrome.tabs.query = async () => [{ id, url: "https://www.bilibili.com/video/" + bvid }];
+    activated({ tabId: id, windowId });
+    // 事件监听不返回同步 promise，等待字幕请求与渲染完成。
+    await new Promise(resolve => setTimeout(resolve, 20));
+  };
+  await switchTab(1, "BV1xx411c7mD");
+  await switchTab(2, "BV1yy411c7mD");
+  assert.equal(ctx.state.tabId, 2);
+  assert.equal(ctx.state.bvid, "BV1yy411c7mD");
+  assert.ok(ctx.state.data);
+  await switchTab(3, "BV1zz411c7mD", 8);
+  assert.equal(ctx.state.bvid, "BV1yy411c7mD");
+  await switchTab(1, "BV1xx411c7mD");
+  assert.deepEqual(ctx.sent.filter(m => m.action === "fetchTranscript").map(m => m.bvid),
+    ["BV1xx411c7mD", "BV1yy411c7mD", "BV1xx411c7mD"]);
+});
+
+
+test("页内面板绑定自己的宿主视频，不跟随其他活动标签页", async()=>{
+ const ctx=createContext({transcript:transcriptResult()});
+ ctx.setHost(42);
+ ctx.chrome.tabs.get=async id=>({id,url:"https://www.bilibili.com/video/BV1yy411c7mD"});
+ ctx.chrome.tabs.query=async()=>{throw new Error("不得查询活动标签页");};
+ await ctx.syncWithActiveTab();
+ assert.equal(ctx.state.tabId,42);
+ assert.equal(ctx.state.bvid,"BV1yy411c7mD");
+ assert.equal(ctx.sent.find(m=>m.action==="fetchTranscript").bvid,"BV1yy411c7mD");
+});
+test("页内面板只响应宿主 SPA 地址变化，忽略其他标签页",async()=>{
+ const ctx=createContext({transcript:transcriptResult()});
+ let updated,activated;
+ ctx.chrome.tabs.onUpdated.addListener=fn=>updated=fn;
+ ctx.chrome.tabs.onActivated.addListener=fn=>activated=fn;
+ ctx.setHost(42);ctx.state.windowId=7;
+ ctx.chrome.tabs.get=async id=>({id,url:"https://www.bilibili.com/video/BV1yy411c7mD"});
+ ctx.setupEventListeners();
+ activated({windowId:7});updated(43,{url:"https://example.com"});
+ await new Promise(r=>setImmediate(r));
+ assert.equal(ctx.sent.length,0);
+ updated(42,{url:"https://www.bilibili.com/video/BV1yy411c7mD"});
+ await new Promise(r=>setImmediate(r));
+ assert.equal(ctx.state.bvid,"BV1yy411c7mD");
 });

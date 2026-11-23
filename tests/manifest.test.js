@@ -49,26 +49,12 @@ test("是一份 MV3 清单", () => {
   );
 });
 
-/**
- * 侧边栏的 per-tab enabled 在两个浏览器上语义不同：Chrome 每个标签页各管各的，
- * Edge 是窗口级的——某个标签页被 disable，切过去就会把整个窗口的侧边栏关掉，
- * 正在跑的 AI 任务跟着断。所以路径只由清单提供，代码里不按标签页开关。
- */
-test("侧边栏全局可用，图标点击交给浏览器处理", () => {
-  assert.ok(manifest.side_panel?.default_path, "侧边栏路径应当由清单提供");
-  assert.ok(manifest.permissions.includes("sidePanel"));
-
-  const source = readText("background.js");
-  assert.doesNotMatch(
-    source,
-    /sidePanel[\s\S]{0,40}setOptions\(/,
-    "按标签页 setOptions 会让 Edge 在切标签页时关掉侧边栏",
-  );
-  assert.match(
-    source,
-    /openPanelOnActionClick:\s*true/,
-    "自己接管图标点击要靠用户手势，Edge 的判定比 Chrome 严，交给浏览器两边都稳",
-  );
+test("页内面板不依赖原生侧边栏权限，只向 B 站公开入口", () => {
+  assert.equal(manifest.side_panel?.default_path, undefined);
+  assert.ok(exists("sidepanel.html"));
+  assert.ok(!manifest.permissions.includes("sidePanel"));
+  assert.deepEqual(manifest.web_accessible_resources, [{ resources: ["sidepanel.html"], matches: ["https://*.bilibili.com/*"] }]);
+  assert.ok(readText("scripts/package.sh").includes("  page-panel.js"));
 });
 
 test("同一份清单能投 Chrome 应用商店和 Edge 加载项", () => {
@@ -261,7 +247,7 @@ test("自定义 AI 地址走可选权限，任意 http(s) 服务商都能运行�
 });
 
 test("内容脚本只注入播放页，不是整个站点", () => {
-  const matches = (manifest.content_scripts || []).flatMap((e) => e.matches);
+  const matches = (manifest.content_scripts || []).filter(e => e.js.includes("content.js")).flatMap((e) => e.matches);
   assert.ok(matches.length > 0);
   for (const pattern of matches) {
     assert.match(
