@@ -6,14 +6,14 @@
   "minimum_chrome_version": "116",
   "description": "__MSG_extensionDescription__",
   "permissions": [
-    "sidePanel",
     "storage",
     "tabs"
   ],
   "host_permissions": [
     "https://www.bilibili.com/*",
     "https://api.bilibili.com/*",
-    "https://*.hdslb.com/*"
+    "https://*.hdslb.com/*",
+    "https://*.bilibili.com/*"
   ],
   "optional_host_permissions": [
     "https://*/*",
@@ -31,9 +31,6 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
-  },
-  "side_panel": {
-    "default_path": "sidepanel.html"
   },
   "background": {
     "service_worker": "background.js"
@@ -53,6 +50,25 @@
         "content.js"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://*.bilibili.com/*"
+      ],
+      "js": [
+        "page-panel.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "sidepanel.html"
+      ],
+      "matches": [
+        "https://*.bilibili.com/*"
+      ]
     }
   ]
 }

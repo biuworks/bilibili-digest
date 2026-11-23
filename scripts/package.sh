@@ -14,6 +14,7 @@ FILES=(
   manifest.json
   background.js
   content.js
+  page-panel.js
   settings.js
   sidepanel.html
   sidepanel.css
